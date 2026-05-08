@@ -1100,11 +1100,13 @@ exportJSONBtn.addEventListener("click", () => {
 async function exportMP4(mode) {
   if (!frames.length || !skel) return;
   const fps = +fpsSlider.value;
-  // Output dimensions: match source video aspect when overlaying, else 720x1280 portrait
+
+  // Output dimensions match source video aspect for both modes — that way
+  // the 2D skeleton overlays at the correct positions whether or not we
+  // draw the source underneath.
   let W = 720, H = 1280;
   const pv = document.getElementById("previewVideo");
-  if (mode === "overlay" && pv && pv.videoWidth) {
-    // Cap to 1280 long edge while preserving aspect
+  if (pv && pv.videoWidth) {
     const vw = pv.videoWidth, vh = pv.videoHeight;
     const cap = 1280;
     if (vw >= vh) { W = cap; H = Math.round(cap * vh / vw); }
@@ -1123,7 +1125,10 @@ async function exportMP4(mode) {
       withVideoUnderlay: mode === "overlay",
       videoEl: pv, videoFps: fps,
       drawFrame: (ctx, idx, w, h) => {
-        skel.drawFrameToContext(ctx, w, h, idx, mode === "overlay" ? "overlay" : "3d");
+        // Both modes use the 2D overlay renderer for the skeleton itself.
+        // The recorder handles drawing the video underneath when overlay=true,
+        // and a black background when overlay=false.
+        skel.drawFrameToContext(ctx, w, h, idx, "overlay");
       },
       onProgress: (p) => {
         mp4ProgressFill.style.width = `${(p * 100).toFixed(0)}%`;

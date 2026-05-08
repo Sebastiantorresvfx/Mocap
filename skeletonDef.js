@@ -44,81 +44,95 @@ export const LM = {
     [24,26],[26,28],[28,30],[28,32],[30,32],
   ],
 
-  // OpenPose-style limb colors. Each entry: [fromIdx, toIdx, "#hex"].
-  // Right side: warm hues (red→orange→yellow). Left side: cool (blue→cyan→green).
-  // Center/spine: magenta. Face: warm pinks.
+  // Canonical OpenPose BODY_25 colors, mapped onto MediaPipe's 33 landmarks.
+  // The palette is HSV-based: hue rotates around the body, with red at the
+  // spine and rainbow gradients down each limb.
+  // Reference: OpenPose getColors() output for BODY_25.
   COLORED_CONNECTIONS: [
-    // ---- Face (warm pinks/reds) ----
-    [0, 2,  "#ff3355"],
-    [2, 5,  "#ff3377"],
-    [5, 8,  "#ff3399"],
-    [0, 1,  "#ff6655"],
-    [1, 4,  "#ff6677"],
-    [4, 7,  "#ff6699"],
-    [9, 10, "#ff5577"],
+    // ---- Spine / torso (reds and oranges) ----
+    [11, 12, "#ff0000"],   // shoulder line — red
+    [11, 23, "#ff5500"],   // L shoulder → L hip
+    [12, 24, "#ff5500"],   // R shoulder → R hip
+    [23, 24, "#ff0000"],   // hip line — red
 
-    // ---- Torso (magenta/purple) ----
-    [11, 12, "#aa00ff"],
-    [11, 23, "#cc00cc"],
-    [12, 24, "#cc00cc"],
-    [23, 24, "#aa00aa"],
+    // ---- Face / head (magenta/pinks/purples) ----
+    [0, 2,  "#ff00aa"],    // nose → left eye
+    [2, 5,  "#dd00ff"],
+    [5, 8,  "#aa00ff"],    // → left ear
+    [0, 1,  "#ff0099"],    // nose → right eye area
+    [1, 4,  "#ff00cc"],
+    [4, 7,  "#cc00ff"],    // → right ear
+    [9, 10, "#ff0077"],    // mouth
 
-    // ---- LEFT arm (cool: greens → cyan → blue) ----
-    [11, 13, "#00ff44"],   // shoulder → elbow (green)
-    [13, 15, "#00ffaa"],   // elbow → wrist (teal)
-    [15, 17, "#00ddff"],   // wrist → pinky (cyan)
-    [15, 19, "#00bbff"],   // wrist → index (sky)
-    [15, 21, "#0099ff"],   // wrist → thumb (blue)
-    [17, 19, "#00aaee"],
+    // ---- LEFT side of CHARACTER (image-right when facing camera) ----
+    // OpenPose convention: orange → yellow → green-yellow as you go down
+    // upper body, then green for legs.
+    // MediaPipe LEFT_* = character's left = image-right when person faces camera.
+    [11, 13, "#ff8800"],   // L shoulder → L elbow (orange)
+    [13, 15, "#ffaa00"],   // L elbow → L wrist (yellow-orange)
+    [15, 17, "#ffcc00"],   // L wrist → L pinky
+    [15, 19, "#ffdd00"],   // L wrist → L index
+    [15, 21, "#ffee00"],   // L wrist → L thumb
+    [17, 19, "#ffd500"],
 
-    // ---- RIGHT arm (warm: yellow → orange → red) ----
-    [12, 14, "#ffee00"],
-    [14, 16, "#ffaa00"],
-    [16, 18, "#ff8800"],
-    [16, 20, "#ff7700"],
-    [16, 22, "#ff5500"],
-    [18, 20, "#ff9900"],
+    // L leg: yellow-green to green
+    [23, 25, "#aaff00"],   // L hip → L knee
+    [25, 27, "#55ff00"],   // L knee → L ankle
+    [27, 29, "#00ff00"],   // L ankle → L heel
+    [27, 31, "#00ff44"],   // L ankle → L toe
+    [29, 31, "#00ff22"],
 
-    // ---- LEFT leg (cool deep) ----
-    [23, 25, "#0044ff"],   // hip → knee (blue)
-    [25, 27, "#0066ff"],   // knee → ankle
-    [27, 29, "#0088ff"],   // ankle → heel
-    [27, 31, "#22aaff"],   // ankle → toe
-    [29, 31, "#0099dd"],
+    // ---- RIGHT side of CHARACTER (image-left) ----
+    // Cool side: cyan → blue → purple
+    [12, 14, "#00ffaa"],   // R shoulder → R elbow (teal)
+    [14, 16, "#00ffff"],   // R elbow → R wrist (cyan)
+    [16, 18, "#00ddff"],
+    [16, 20, "#00bbff"],
+    [16, 22, "#0099ff"],
+    [18, 20, "#00ccff"],
 
-    // ---- RIGHT leg (warm deep) ----
-    [24, 26, "#ff2200"],
-    [26, 28, "#ff4400"],
-    [28, 30, "#ff5511"],
-    [28, 32, "#ff6622"],
-    [30, 32, "#dd4411"],
+    // R leg: blue → indigo → purple
+    [24, 26, "#0066ff"],   // R hip → R knee
+    [26, 28, "#0033ff"],   // R knee → R ankle
+    [28, 30, "#3300ff"],   // R ankle → R heel
+    [28, 32, "#5500ff"],   // R ankle → R toe
+    [30, 32, "#4400ff"],
   ],
 
-  // Per-landmark joint colors (OpenPose dot palette)
+  // Per-landmark joint dot colors — match the bone palette
   JOINT_COLORS: [
-    // 0..10 face/head
-    "#ff0055", "#ff3366", "#ff3377", "#ff5588", "#ff3366",
-    "#ff3377", "#ff5588", "#ff77aa", "#ff77aa", "#ff5588", "#ff5588",
+    // 0..10 face
+    "#ff0066",   // 0 nose (red-pink)
+    "#ff00aa",   // 1 R eye inner
+    "#ff0099",   // 2 L eye inner (image-right of nose)
+    "#ff00cc",
+    "#ff00bb",
+    "#dd00ff",
+    "#aa00ff",
+    "#ff0099",   // 7 L ear
+    "#cc00ff",   // 8 R ear
+    "#ff0077",   // 9 mouth left
+    "#ff0088",   // 10 mouth right
     // 11..16 shoulders/elbows/wrists
-    "#00ff66",   // 11 L shoulder
-    "#ffcc00",   // 12 R shoulder
-    "#00ffaa",   // 13 L elbow
-    "#ff9900",   // 14 R elbow
-    "#00ddff",   // 15 L wrist
-    "#ff7700",   // 16 R wrist
+    "#ff8800",   // 11 L shoulder (orange)
+    "#00ffaa",   // 12 R shoulder (teal)
+    "#ffaa00",   // 13 L elbow
+    "#00ffff",   // 14 R elbow
+    "#ffcc00",   // 15 L wrist
+    "#00ddff",   // 16 R wrist
     // 17..22 hand fingers
-    "#00ccff", "#ff8800", "#00aaff", "#ff6600", "#0088ff", "#ff5500",
+    "#ffdd00", "#00ccff", "#ffe200", "#00bbff", "#ffee00", "#0099ff",
     // 23..32 hips/knees/ankles/feet
-    "#aa00ff",   // 23 L hip
-    "#ee0044",   // 24 R hip
-    "#0066ff",   // 25 L knee
-    "#ff3300",   // 26 R knee
-    "#0088ff",   // 27 L ankle
-    "#ff5500",   // 28 R ankle
-    "#0099dd",   // 29 L heel
-    "#dd4400",   // 30 R heel
-    "#22aaff",   // 31 L toe
-    "#ff6611",   // 32 R toe
+    "#ff5500",   // 23 L hip
+    "#ff5500",   // 24 R hip
+    "#aaff00",   // 25 L knee
+    "#0066ff",   // 26 R knee
+    "#55ff00",   // 27 L ankle
+    "#0033ff",   // 28 R ankle
+    "#00ff00",   // 29 L heel
+    "#3300ff",   // 30 R heel
+    "#00ff44",   // 31 L toe
+    "#5500ff",   // 32 R toe
   ],
 };
 

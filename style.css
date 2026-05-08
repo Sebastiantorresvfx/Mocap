@@ -449,11 +449,11 @@ input[type="range"]::-moz-range-thumb {
 }
 .lens-toggle {
   position: absolute;
-  top: 10px;
+  bottom: 10px;
   left: 10px;
   display: none;
   gap: 4px;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0,0,0,0.7);
   border: 1px solid var(--line);
   border-radius: 3px;
   padding: 3px;
@@ -497,22 +497,29 @@ input[type="range"]::-moz-range-thumb {
   inset: 0;
   pointer-events: none;
   padding: 12px;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
 }
 .frame-counter {
+  position: absolute;
+  top: 12px;
+  left: 12px;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--ink-dim);
-  background: rgba(0,0,0,0.5);
+  background: rgba(0,0,0,0.6);
   padding: 4px 8px;
   border-radius: 2px;
 }
+.preview3d:not(.mode-overlay) .frame-counter { display: none; }
 .hint-overlay {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
   font-family: var(--mono);
   font-size: 10px;
   color: var(--ink-low);
+  background: rgba(0,0,0,0.5);
+  padding: 4px 8px;
+  border-radius: 2px;
 }
 
 .playback {

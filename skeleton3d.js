@@ -120,7 +120,7 @@ export class Skeleton3D {
   setFrames(frames) {
     this.frames = frames;
     this.yaw = 0;
-    this.pitch = -0.05;
+    this.pitch = 0;            // truly horizontal — no down-tilt
     if (frames.length) {
       let minY = Infinity, maxY = -Infinity, maxR = 0;
       for (const f of frames) {
@@ -132,33 +132,37 @@ export class Skeleton3D {
         }
       }
       const height = Math.max(0.5, maxY - minY);
-      // Place camera so character vertically fills ~70% of frame at given FOV.
-      // Vertical FOV from horizontal FOV + aspect ratio.
+      // Aim camera at mid-torso (~60% up the body) so character is centered
+      this.targetY = minY + height * 0.6;
+      // Place camera so character vertically fills ~75% of frame at given FOV
       const aspect = this.W / this.H;
       const hFovRad = this.hFov * Math.PI / 180;
       const vFovRad = 2 * Math.atan(Math.tan(hFovRad / 2) / aspect);
-      this.camDist = (height * 0.7) / (2 * Math.tan(vFovRad / 2));
+      this.camDist = (height * 0.75) / (2 * Math.tan(vFovRad / 2));
       this.camDist = Math.max(this.camDist, maxR * 1.5 + 1.0);
     }
   }
 
   _project(p) {
-    // Yaw + pitch rotation around origin (character pivot)
+    // Translate so target is at origin (camera looks at chest height)
+    const tx = p[0], ty = p[1] - (this.targetY ?? 0), tz = p[2];
+    // Yaw rotation around Y
     const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
+    const x = tx*cy - tz*sy;
+    let z = tx*sy + tz*cy;
+    // Pitch (locked at 0 for now but math kept for future)
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
-    let x = p[0]*cy - p[2]*sy;
-    let z = p[0]*sy + p[2]*cy;
-    let y = p[1];
-    const y2 = y*cp - z*sp;
-    const z2 = y*sp + z*cp;
-    y = y2; z = z2;
-    // Camera at (0, 0, camDist), looking toward -z
+    const y2 = ty*cp - z*sp;
+    const z2 = ty*sp + z*cp;
+    const y = y2;
+    z = z2;
+    // Camera at (0, 0, camDist) looking toward -z, target now at origin
     const cz = this.camDist - z;
     if (cz < 0.01) return [0, 0, cz];
     const hFovRad = this.hFov * Math.PI / 180;
     const f = (this.W / 2) / Math.tan(hFovRad / 2);
     const sx = (this.W / 2) + (x * f) / cz;
-    const sy2 = (this.H / 2) - (y * f) / cz + this.panY;
+    const sy2 = (this.H / 2) - (y * f) / cz;
     return [sx, sy2, cz];
   }
 

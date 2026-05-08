@@ -250,6 +250,8 @@ bind(smoothSlider, smoothVal);
 bind(blendSlider, blendVal);
 bind(confSlider, confVal);
 bind(vertSlider, vertVal);
+const heightSlider = $("height"), heightValEl = $("heightVal");
+bind(heightSlider, heightValEl, (v) => parseFloat(v).toFixed(2) + " m");
 
 // Segmented controls (FPS, aspect)
 function bindSeg(id, onChange) {
@@ -558,6 +560,36 @@ function postProcess(frames) {
     if (vertAmt > 0.001) applyVerticality(f, vertAmt);
   }
 
+  // Final pass: scale all coordinates to real-world meters based on
+  // user-supplied character height. Uses median detected head-to-foot
+  // distance to be robust against outlier frames.
+  const targetHeight = +heightSlider.value;
+  const detectedHeights = [];
+  for (const f of frames) {
+    if (f.rest) continue;
+    let topY = -Infinity, botY = Infinity;
+    for (let j = 0; j < 33; j++) {
+      const s = f.points[j].score;
+      if (s < 0.4) continue;
+      const y = f.points[j].y;
+      if (y > topY) topY = y;
+      if (y < botY) botY = y;
+    }
+    if (isFinite(topY) && isFinite(botY)) detectedHeights.push(topY - botY);
+  }
+  detectedHeights.sort((a, b) => a - b);
+  const detected = detectedHeights.length
+    ? detectedHeights[Math.floor(detectedHeights.length / 2)]
+    : 1.7;
+  const scale = targetHeight / Math.max(detected, 0.01);
+  for (const f of frames) {
+    for (let j = 0; j < 33; j++) {
+      f.points[j].x *= scale;
+      f.points[j].y *= scale;
+      f.points[j].z *= scale;
+    }
+  }
+
   // meta
   const avgConf = totalCount ? totalConf / totalCount : 0;
   metaFrames.textContent = frames.length;
@@ -747,10 +779,14 @@ document.querySelectorAll(".view-btn").forEach(btn => {
 
 // Lens toggle (only relevant in 3D mode)
 document.querySelectorAll("#lensToggle button").forEach(btn => {
-  btn.addEventListener("click", () => {
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
     document.querySelectorAll("#lensToggle button").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
-    if (skel) skel.setLens(+btn.dataset.lens);
+    if (skel) {
+      skel.setLens(+btn.dataset.lens);
+      skel.showFrame(skel.frameIdx);
+    }
   });
 });
 frameScrub.addEventListener("input", (e) => {

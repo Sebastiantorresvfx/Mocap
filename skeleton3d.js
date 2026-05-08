@@ -52,6 +52,72 @@ export class Skeleton3D {
   }
   setHFOV(_deg) { /* device picker is for overlay context only */ }
 
+  // Draw a single frame onto an arbitrary 2D context at given size.
+  // mode: "overlay" (2D bones using raw2d) or "3d" (perspective projection).
+  // Used by the MP4 recorder.
+  drawFrameToContext(ctx, W, H, frameIdx, mode) {
+    const frame = this.frames[frameIdx];
+    if (!frame) return;
+    if (mode === "overlay") this._drawOverlayBones(ctx, W, H, frame);
+    else                    this._draw3DBones(ctx, W, H, frame);
+  }
+
+  _drawOverlayBones(ctx, W, H, frame) {
+    if (!frame.raw2d) return;
+    let drawW = W, drawH = H, offX = 0, offY = 0;
+    if (this.videoEl && this.videoEl.videoWidth) {
+      const vAR = this.videoEl.videoWidth / this.videoEl.videoHeight;
+      const cAR = W / H;
+      if (vAR > cAR) { drawW = W; drawH = W / vAR; offY = (H - drawH) / 2; }
+      else            { drawH = H; drawW = H * vAR; offX = (W - drawW) / 2; }
+    }
+    const proj = (p) => [offX + p.x * drawW, offY + p.y * drawH];
+    ctx.lineCap = "round";
+    ctx.lineWidth = 5;
+    for (const [a, b, color] of LM.COLORED_CONNECTIONS) {
+      const pa = frame.raw2d[a], pb = frame.raw2d[b];
+      if (!pa || !pb) continue;
+      if (pa.score < 0.3 && pb.score < 0.3) continue;
+      const [ax, ay] = proj(pa), [bx, by] = proj(pb);
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+    }
+    for (let j = 0; j < 33; j++) {
+      const p = frame.raw2d[j];
+      if (!p) continue;
+      const [x, y] = proj(p);
+      ctx.fillStyle = LM.JOINT_COLORS[j] || "#fff";
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  _draw3DBones(ctx, W, H, frame) {
+    const oldW = this.W, oldH = this.H;
+    this.W = W; this.H = H;
+    const pts = frame.points.map(p => this._project([p.x, p.y, p.z]));
+    ctx.lineCap = "round";
+    ctx.lineWidth = 5;
+    for (const [a, b, color] of LM.COLORED_CONNECTIONS) {
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(pts[a][0], pts[a][1]);
+      ctx.lineTo(pts[b][0], pts[b][1]);
+      ctx.stroke();
+    }
+    for (let j = 0; j < 33; j++) {
+      ctx.fillStyle = LM.JOINT_COLORS[j] || "#fff";
+      ctx.beginPath();
+      ctx.arc(pts[j][0], pts[j][1], 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    this.W = oldW; this.H = oldH;
+  }
+
   _resize() {
     const dpr = window.devicePixelRatio || 1;
     const r = this.canvas.getBoundingClientRect();
@@ -204,7 +270,6 @@ export class Skeleton3D {
     if (!frame.raw2d) return;
 
     // Compute the rect where the video is actually drawn (object-fit: contain).
-    // We need to mirror that math so the bones land on the person.
     let drawW = this.W, drawH = this.H, offX = 0, offY = 0;
     if (this.videoEl && this.videoEl.videoWidth) {
       const vAR = this.videoEl.videoWidth / this.videoEl.videoHeight;
@@ -222,29 +287,29 @@ export class Skeleton3D {
 
     const proj = (p) => [offX + p.x * drawW, offY + p.y * drawH];
 
-    // bones
+    // Bones with OpenPose limb colors
     ctx.lineCap = "round";
-    ctx.strokeStyle = "rgba(255, 91, 31, 0.95)";
-    ctx.lineWidth = 3;
-    for (const [a, b] of LM.CONNECTIONS) {
+    ctx.lineWidth = 4;
+    for (const [a, b, color] of LM.COLORED_CONNECTIONS) {
       const pa = frame.raw2d[a], pb = frame.raw2d[b];
       if (!pa || !pb) continue;
       if (pa.score < 0.3 && pb.score < 0.3) continue;
       const [ax, ay] = proj(pa), [bx, by] = proj(pb);
+      ctx.strokeStyle = color;
       ctx.beginPath();
       ctx.moveTo(ax, ay);
       ctx.lineTo(bx, by);
       ctx.stroke();
     }
 
-    // joints
+    // Joints with OpenPose dot palette
     for (let j = 0; j < 33; j++) {
       const p = frame.raw2d[j];
       if (!p) continue;
       const [x, y] = proj(p);
-      ctx.fillStyle = `rgba(247, 201, 72, ${Math.max(0.3, p.score)})`;
+      ctx.fillStyle = LM.JOINT_COLORS[j] || "#ffffff";
       ctx.beginPath();
-      ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -260,12 +325,10 @@ export class Skeleton3D {
     const pts = frame.points.map(p => this._project([p.x, p.y, p.z]));
 
     ctx.lineCap = "round";
-    for (const [a, b] of LM.CONNECTIONS) {
+    for (const [a, b, color] of LM.COLORED_CONNECTIONS) {
       const pa = pts[a], pb = pts[b];
-      const avgZ = (pa[2] + pb[2]) / 2;
-      const shade = Math.max(0.35, Math.min(1, 1 - avgZ * 0.5));
-      ctx.strokeStyle = `rgba(255, 91, 31, ${shade})`;
-      ctx.lineWidth = 3 * shade;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 4;
       ctx.beginPath();
       ctx.moveTo(pa[0], pa[1]);
       ctx.lineTo(pb[0], pb[1]);
@@ -275,9 +338,8 @@ export class Skeleton3D {
     for (let j = 0; j < 33; j++) {
       const p = pts[j];
       const c = frame.points[j].score;
-      const r = 2 + c * 2.5;
-      const shade = Math.max(0.4, Math.min(1, 1 - p[2] * 0.5));
-      ctx.fillStyle = `rgba(247, 201, 72, ${shade})`;
+      const r = 3 + c * 2;
+      ctx.fillStyle = LM.JOINT_COLORS[j] || "#ffffff";
       ctx.beginPath();
       ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
       ctx.fill();

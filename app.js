@@ -9,6 +9,7 @@ import { LM, REST_POSE, JOINT_LIMITS } from "./skeletonDef.js";
 import { calibrateSkeleton, solveFrame, worldToLocal, JOINT_ORDER, PARENT } from "./solver.js";
 import { smoothQuatSeries } from "./quatSmooth.js";
 import { q } from "./quat.js";
+import { recordSkeletonMP4 } from "./recorder.js";
 
 // MediaPipe is loaded dynamically below so we can catch import failures
 let PoseLandmarker = null;
@@ -31,6 +32,8 @@ const captureBtn = $("captureBtn"), cancelBtn = $("cancelBtn");
 const progress = $("progress"), progressFill = $("progressFill"),
       progressText = $("progressText");
 const exportBVHBtn = $("exportBVH"), exportJSONBtn = $("exportJSON");
+const exportMP4OverlayBtn = $("exportMP4Overlay"), exportMP4SoloBtn = $("exportMP4Solo");
+const mp4Progress = $("mp4Progress"), mp4ProgressFill = $("mp4ProgressFill"), mp4ProgressText = $("mp4ProgressText");
 const statusEl = $("status"), statusText = $("statusText");
 const previewPlay = $("previewPlay"), frameScrub = $("frameScrub");
 const frameCounter = $("frameCounter");
@@ -1073,6 +1076,8 @@ previewPlay.addEventListener("click", () => {
 function enableExport() {
   exportBVHBtn.disabled = false;
   exportJSONBtn.disabled = false;
+  if (exportMP4OverlayBtn) exportMP4OverlayBtn.disabled = false;
+  if (exportMP4SoloBtn)    exportMP4SoloBtn.disabled    = false;
 }
 exportBVHBtn.addEventListener("click", () => {
   const fps = +fpsSlider.value;
@@ -1091,6 +1096,59 @@ exportJSONBtn.addEventListener("click", () => {
   });
   download(json, "mocap.json", "application/json");
 });
+
+async function exportMP4(mode) {
+  if (!frames.length || !skel) return;
+  const fps = +fpsSlider.value;
+  // Output dimensions: match source video aspect when overlaying, else 720x1280 portrait
+  let W = 720, H = 1280;
+  const pv = document.getElementById("previewVideo");
+  if (mode === "overlay" && pv && pv.videoWidth) {
+    // Cap to 1280 long edge while preserving aspect
+    const vw = pv.videoWidth, vh = pv.videoHeight;
+    const cap = 1280;
+    if (vw >= vh) { W = cap; H = Math.round(cap * vh / vw); }
+    else          { H = cap; W = Math.round(cap * vw / vh); }
+  }
+
+  exportMP4OverlayBtn.disabled = true;
+  exportMP4SoloBtn.disabled = true;
+  mp4Progress.hidden = false;
+  mp4ProgressFill.style.width = "0%";
+  mp4ProgressText.textContent = "encoding 0%";
+
+  try {
+    const blob = await recordSkeletonMP4({
+      width: W, height: H, fps, frameCount: frames.length,
+      withVideoUnderlay: mode === "overlay",
+      videoEl: pv, videoFps: fps,
+      drawFrame: (ctx, idx, w, h) => {
+        skel.drawFrameToContext(ctx, w, h, idx, mode === "overlay" ? "overlay" : "3d");
+      },
+      onProgress: (p) => {
+        mp4ProgressFill.style.width = `${(p * 100).toFixed(0)}%`;
+        mp4ProgressText.textContent = `encoding ${(p * 100).toFixed(0)}%`;
+      },
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = mode === "overlay" ? "mocap-overlay.mp4" : "mocap-skeleton.mp4";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    mp4ProgressText.textContent = `done · ${(blob.size / 1_048_576).toFixed(1)} MB`;
+  } catch (e) {
+    console.error(e);
+    mp4ProgressText.textContent = "MP4 export failed: " + (e.message || e);
+    diag(`✗ MP4 export: ${e.message || e}`);
+  } finally {
+    exportMP4OverlayBtn.disabled = false;
+    exportMP4SoloBtn.disabled = false;
+    setTimeout(() => { mp4Progress.hidden = true; }, 4000);
+  }
+}
+if (exportMP4OverlayBtn) exportMP4OverlayBtn.addEventListener("click", () => exportMP4("overlay"));
+if (exportMP4SoloBtn)    exportMP4SoloBtn.addEventListener("click",    () => exportMP4("solo"));
+
 function download(text, name, mime) {
   const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);

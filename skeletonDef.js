@@ -43,6 +43,83 @@ export const LM = {
     [23,25],[25,27],[27,29],[27,31],[29,31],
     [24,26],[26,28],[28,30],[28,32],[30,32],
   ],
+
+  // OpenPose-style limb colors. Each entry: [fromIdx, toIdx, "#hex"].
+  // Right side: warm hues (red→orange→yellow). Left side: cool (blue→cyan→green).
+  // Center/spine: magenta. Face: warm pinks.
+  COLORED_CONNECTIONS: [
+    // ---- Face (warm pinks/reds) ----
+    [0, 2,  "#ff3355"],
+    [2, 5,  "#ff3377"],
+    [5, 8,  "#ff3399"],
+    [0, 1,  "#ff6655"],
+    [1, 4,  "#ff6677"],
+    [4, 7,  "#ff6699"],
+    [9, 10, "#ff5577"],
+
+    // ---- Torso (magenta/purple) ----
+    [11, 12, "#aa00ff"],
+    [11, 23, "#cc00cc"],
+    [12, 24, "#cc00cc"],
+    [23, 24, "#aa00aa"],
+
+    // ---- LEFT arm (cool: greens → cyan → blue) ----
+    [11, 13, "#00ff44"],   // shoulder → elbow (green)
+    [13, 15, "#00ffaa"],   // elbow → wrist (teal)
+    [15, 17, "#00ddff"],   // wrist → pinky (cyan)
+    [15, 19, "#00bbff"],   // wrist → index (sky)
+    [15, 21, "#0099ff"],   // wrist → thumb (blue)
+    [17, 19, "#00aaee"],
+
+    // ---- RIGHT arm (warm: yellow → orange → red) ----
+    [12, 14, "#ffee00"],
+    [14, 16, "#ffaa00"],
+    [16, 18, "#ff8800"],
+    [16, 20, "#ff7700"],
+    [16, 22, "#ff5500"],
+    [18, 20, "#ff9900"],
+
+    // ---- LEFT leg (cool deep) ----
+    [23, 25, "#0044ff"],   // hip → knee (blue)
+    [25, 27, "#0066ff"],   // knee → ankle
+    [27, 29, "#0088ff"],   // ankle → heel
+    [27, 31, "#22aaff"],   // ankle → toe
+    [29, 31, "#0099dd"],
+
+    // ---- RIGHT leg (warm deep) ----
+    [24, 26, "#ff2200"],
+    [26, 28, "#ff4400"],
+    [28, 30, "#ff5511"],
+    [28, 32, "#ff6622"],
+    [30, 32, "#dd4411"],
+  ],
+
+  // Per-landmark joint colors (OpenPose dot palette)
+  JOINT_COLORS: [
+    // 0..10 face/head
+    "#ff0055", "#ff3366", "#ff3377", "#ff5588", "#ff3366",
+    "#ff3377", "#ff5588", "#ff77aa", "#ff77aa", "#ff5588", "#ff5588",
+    // 11..16 shoulders/elbows/wrists
+    "#00ff66",   // 11 L shoulder
+    "#ffcc00",   // 12 R shoulder
+    "#00ffaa",   // 13 L elbow
+    "#ff9900",   // 14 R elbow
+    "#00ddff",   // 15 L wrist
+    "#ff7700",   // 16 R wrist
+    // 17..22 hand fingers
+    "#00ccff", "#ff8800", "#00aaff", "#ff6600", "#0088ff", "#ff5500",
+    // 23..32 hips/knees/ankles/feet
+    "#aa00ff",   // 23 L hip
+    "#ee0044",   // 24 R hip
+    "#0066ff",   // 25 L knee
+    "#ff3300",   // 26 R knee
+    "#0088ff",   // 27 L ankle
+    "#ff5500",   // 28 R ankle
+    "#0099dd",   // 29 L heel
+    "#dd4400",   // 30 R heel
+    "#22aaff",   // 31 L toe
+    "#ff6611",   // 32 R toe
+  ],
 };
 
 // Standing rest pose in our centered Y-up coordinate system.

@@ -191,6 +191,14 @@
       <button id="exportBVH" class="btn primary" disabled>↓ export BVH</button>
       <button id="exportJSON" class="btn ghost" disabled>↓ export JSON</button>
     </div>
+    <div class="export">
+      <button id="exportMP4Overlay" class="btn ghost" disabled>↓ MP4 · skeleton on video</button>
+      <button id="exportMP4Solo" class="btn ghost" disabled>↓ MP4 · skeleton only</button>
+    </div>
+    <div class="progress" id="mp4Progress" hidden>
+      <div class="progress-bar"><div id="mp4ProgressFill"></div></div>
+      <div class="progress-text" id="mp4ProgressText">encoding…</div>
+    </div>
 
     <div class="meta" id="meta">
       <div class="meta-row"><span>frames</span><span id="metaFrames">—</span></div>

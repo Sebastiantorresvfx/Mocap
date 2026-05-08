@@ -2,13 +2,14 @@
 // Pipeline: MediaPipe Pose → confidence-weighted blend → joint clamping
 //           → One Euro smoothing → ground/root lock → BVH export
 
-import { PoseLandmarker, FilesetResolver }
-  from "https://cdn.jsdelivr.net/npm/@mediapipe/[email protected]";
-
 import { OneEuroFilter } from "./oneEuro.js";
 import { exportBVH } from "./bvh.js";
 import { Skeleton3D }  from "./skeleton3d.js";
 import { LM, REST_POSE, JOINT_LIMITS } from "./skeletonDef.js";
+
+// MediaPipe is loaded dynamically below so we can catch import failures
+let PoseLandmarker = null;
+let FilesetResolver = null;
 
 // ---------------- DOM ----------------
 const $ = (id) => document.getElementById(id);
@@ -51,30 +52,73 @@ function setStatus(s, msg) {
 // ---------------- model init ----------------
 // Track last error so user can tap status to see it
 let lastModelError = "";
+let diagLog = [];
+
+function diag(msg) {
+  diagLog.push(`[${(performance.now()/1000).toFixed(2)}s] ${msg}`);
+  console.log(msg);
+}
+
+async function loadMediaPipeLib() {
+  // Try multiple CDN sources; iOS Safari sometimes refuses jsdelivr module imports
+  const sources = [
+    "https://cdn.jsdelivr.net/npm/@mediapipe/[email protected]/vision_bundle.mjs",
+    "https://unpkg.com/@mediapipe/[email protected]/vision_bundle.mjs",
+    "https://esm.sh/@mediapipe/[email protected]",
+  ];
+  let lastErr = null;
+  for (const src of sources) {
+    try {
+      diag(`importing ${src.split("/")[2]}…`);
+      const mod = await import(/* @vite-ignore */ src);
+      if (mod.PoseLandmarker && mod.FilesetResolver) {
+        PoseLandmarker = mod.PoseLandmarker;
+        FilesetResolver = mod.FilesetResolver;
+        diag(`✓ library loaded from ${src.split("/")[2]}`);
+        return;
+      }
+      diag(`module loaded but missing exports from ${src.split("/")[2]}`);
+    } catch (e) {
+      lastErr = e;
+      diag(`✗ failed ${src.split("/")[2]}: ${(e.message||e).slice(0,60)}`);
+    }
+  }
+  throw lastErr || new Error("no CDN source worked");
+}
 
 async function initModel() {
-  setStatus("busy", "loading model");
+  setStatus("busy", "loading library");
   lastModelError = "";
 
+  try {
+    if (!PoseLandmarker) await loadMediaPipeLib();
+  } catch (e) {
+    lastModelError = "library load failed: " + (e.message || e);
+    diag(lastModelError);
+    setStatus("err", "tap to see error · retry");
+    return;
+  }
+
   const modelUrls = [
-    // Lite model first — smaller (~3MB), more likely to succeed on mobile
     "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
-    // Full model fallback
     "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
   ];
 
   try {
     setStatus("busy", "loading wasm");
+    diag("resolving wasm fileset…");
     const fileset = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/[email protected]/wasm"
     );
+    diag("✓ wasm fileset ready");
 
     let lastErr = null;
     for (const modelAssetPath of modelUrls) {
       const modelLabel = modelAssetPath.includes("_lite") ? "lite" : "full";
       for (const delegate of ["GPU", "CPU"]) {
         try {
-          setStatus("busy", `loading ${modelLabel} (${delegate.toLowerCase()})`);
+          setStatus("busy", `loading ${modelLabel}/${delegate.toLowerCase()}`);
+          diag(`trying ${modelLabel}/${delegate}…`);
           landmarker = await PoseLandmarker.createFromOptions(fileset, {
             baseOptions: { modelAssetPath, delegate },
             runningMode: "VIDEO",
@@ -84,12 +128,13 @@ async function initModel() {
             minTrackingConfidence: 0.5,
             outputSegmentationMasks: false,
           });
+          diag(`✓ landmarker created (${modelLabel}/${delegate})`);
           setStatus("ready", `model ready · ${modelLabel}/${delegate.toLowerCase()}`);
           if (videoLoaded) captureBtn.disabled = false;
           return;
         } catch (e) {
           lastErr = e;
-          console.warn(`init failed [${modelLabel}/${delegate}]:`, e);
+          diag(`✗ ${modelLabel}/${delegate}: ${(e.message||e).slice(0,80)}`);
         }
       }
     }
@@ -103,13 +148,20 @@ async function initModel() {
 
 // Tap status to retry / view error
 statusEl.addEventListener("click", () => {
+  const log = diagLog.join("\n");
   if (statusEl.classList.contains("err")) {
-    alert("Model load error:\n\n" + (lastModelError || "unknown") +
-      "\n\nTapping OK will retry. If this keeps failing, check your network — the app needs to reach cdn.jsdelivr.net and storage.googleapis.com.");
+    alert("DIAGNOSTIC LOG:\n\n" + log + "\n\n--- LAST ERROR ---\n" + (lastModelError || "unknown") +
+      "\n\nTapping OK will retry.");
     initModel();
+  } else {
+    alert("DIAGNOSTIC LOG:\n\n" + log);
   }
 });
 statusEl.style.cursor = "pointer";
+
+// Backup diag button (some users miss the small status indicator)
+const diagBtn = document.getElementById("modelDiag");
+if (diagBtn) diagBtn.addEventListener("click", () => statusEl.click());
 
 // ---------------- file loading ----------------
 function loadVideoFile(file) {

@@ -198,10 +198,16 @@ const diagBtn = document.getElementById("modelDiag");
 if (diagBtn) diagBtn.addEventListener("click", () => statusEl.click());
 
 // ---------------- file loading ----------------
+let videoSrcUrl = null;
+
 function loadVideoFile(file) {
   if (!file) return;
-  const url = URL.createObjectURL(file);
-  video.src = url;
+  if (videoSrcUrl) URL.revokeObjectURL(videoSrcUrl);
+  videoSrcUrl = URL.createObjectURL(file);
+  video.src = videoSrcUrl;
+  // Mirror to preview video element so overlay mode can show the source
+  const pv = document.getElementById("previewVideo");
+  if (pv) pv.src = videoSrcUrl;
   video.onloadedmetadata = () => {
     overlay.width = video.videoWidth;
     overlay.height = video.videoHeight;
@@ -375,17 +381,20 @@ function seekVideo(t) {
 // We convert to a centered, Y-up coordinate system in meters-ish.
 function processFrame(lms, filters, frameIdx, dt) {
   const out = {
-    points: new Array(33),     // {x,y,z,score}
+    points: new Array(33),     // {x,y,z,score} in centered/scaled world space
+    raw2d: null,               // [{x,y,score}, ...] normalized image coords (for overlay)
     rest: false,
   };
   if (!lms) {
-    // Fully missing — mark rest
     for (let j = 0; j < 33; j++) {
       out.points[j] = { x: REST_POSE[j][0], y: REST_POSE[j][1], z: REST_POSE[j][2], score: 0 };
     }
     out.rest = true;
     return out;
   }
+
+  // Save raw 2D normalized coords for overlay view
+  out.raw2d = lms.map(p => ({ x: p.x, y: p.y, score: p.visibility ?? 1.0 }));
 
   // Hip midpoint as origin
   const lh = lms[LM.LEFT_HIP], rh = lms[LM.RIGHT_HIP];
@@ -619,17 +628,53 @@ function drawOverlay(lms) {
 // ---------------- 3D preview ----------------
 function initSkeletonPreview() {
   if (!skel) skel = new Skeleton3D(skeletonCanvas);
+  const pv = document.getElementById("previewVideo");
+  skel.setVideoElement(pv);
   skel.setFrames(frames);
   frameScrub.disabled = false;
   previewPlay.disabled = false;
   frameScrub.max = frames.length - 1;
   frameScrub.value = 0;
+  syncPreviewVideo(0);
   skel.showFrame(0);
   frameCounter.textContent = `1 / ${frames.length}`;
+  // default to overlay mode
+  document.getElementById("preview3d").classList.add("mode-overlay");
 }
+
+function syncPreviewVideo(frameIdx) {
+  const pv = document.getElementById("previewVideo");
+  if (!pv || !pv.duration) return;
+  const fps = +fpsSlider.value;
+  const t = frameIdx / fps;
+  if (Math.abs(pv.currentTime - t) > 0.05) {
+    try { pv.currentTime = Math.min(t, pv.duration - 0.001); } catch {}
+  }
+}
+
+// View toggle buttons
+document.querySelectorAll(".view-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".view-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    const view = btn.dataset.view;
+    const wrap = document.getElementById("preview3d");
+    const hint = document.getElementById("hintOverlay");
+    if (view === "overlay") {
+      wrap.classList.add("mode-overlay");
+      if (hint) hint.textContent = "skeleton overlaid on source video";
+      if (skel) skel.setMode("overlay");
+    } else {
+      wrap.classList.remove("mode-overlay");
+      if (hint) hint.textContent = "drag to orbit · scroll to zoom";
+      if (skel) skel.setMode("3d");
+    }
+  });
+});
 frameScrub.addEventListener("input", (e) => {
   if (!skel) return;
   const i = +e.target.value;
+  syncPreviewVideo(i);
   skel.showFrame(i);
   frameCounter.textContent = `${i + 1} / ${frames.length}`;
 });
@@ -647,6 +692,7 @@ previewPlay.addEventListener("click", () => {
       const elapsed = now - last;
       if (elapsed >= 1000 / fps) {
         i = (i + 1) % frames.length;
+        syncPreviewVideo(i);
         skel.showFrame(i);
         frameScrub.value = i;
         frameCounter.textContent = `${i + 1} / ${frames.length}`;

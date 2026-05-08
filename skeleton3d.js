@@ -1,5 +1,8 @@
 // Minimal 3D skeleton viewer — no external 3D library.
-// Orthographic projection with orbit + zoom, draws bones & joints.
+// Two render modes:
+//   "3d"      — orthographic 3D with orbit/zoom
+//   "overlay" — flat 2D projection onto the source video using
+//               the raw normalized image coords from MediaPipe
 
 import { LM } from "./skeletonDef.js";
 
@@ -9,17 +12,28 @@ export class Skeleton3D {
     this.ctx = canvas.getContext("2d");
     this.frames = [];
     this.frameIdx = 0;
+    this.mode = "overlay";   // default to overlay so user sees alignment first
 
-    // camera
+    // camera (3d mode)
     this.yaw = 0.4;
     this.pitch = -0.15;
     this.zoom = 1.0;
     this.panY = 0;
 
+    // video element used in overlay mode (set externally)
+    this.videoEl = null;
+
     this._bindInput();
     this._resize();
     window.addEventListener("resize", () => this._resize());
   }
+
+  setMode(mode) {
+    this.mode = mode;
+    if (this.frames.length) this.showFrame(this.frameIdx);
+  }
+
+  setVideoElement(el) { this.videoEl = el; }
 
   _resize() {
     const dpr = window.devicePixelRatio || 1;
@@ -34,7 +48,10 @@ export class Skeleton3D {
 
   _bindInput() {
     let dragging = false, lx = 0, ly = 0;
-    this.canvas.addEventListener("mousedown", (e) => { dragging = true; lx = e.clientX; ly = e.clientY; });
+    this.canvas.addEventListener("mousedown", (e) => {
+      if (this.mode !== "3d") return;
+      dragging = true; lx = e.clientX; ly = e.clientY;
+    });
     window.addEventListener("mouseup", () => dragging = false);
     window.addEventListener("mousemove", (e) => {
       if (!dragging) return;
@@ -46,6 +63,7 @@ export class Skeleton3D {
       this.showFrame(this.frameIdx);
     });
     this.canvas.addEventListener("wheel", (e) => {
+      if (this.mode !== "3d") return;
       e.preventDefault();
       this.zoom *= (1 - e.deltaY * 0.001);
       this.zoom = Math.max(0.3, Math.min(3, this.zoom));
@@ -55,6 +73,7 @@ export class Skeleton3D {
     // touch
     let tdx = 0, tdy = 0, pinchDist = 0;
     this.canvas.addEventListener("touchstart", (e) => {
+      if (this.mode !== "3d") return;
       if (e.touches.length === 1) { tdx = e.touches[0].clientX; tdy = e.touches[0].clientY; }
       else if (e.touches.length === 2) {
         pinchDist = Math.hypot(
@@ -63,6 +82,7 @@ export class Skeleton3D {
       }
     });
     this.canvas.addEventListener("touchmove", (e) => {
+      if (this.mode !== "3d") return;
       e.preventDefault();
       if (e.touches.length === 1) {
         const dx = e.touches[0].clientX - tdx, dy = e.touches[0].clientY - tdy;
@@ -122,18 +142,73 @@ export class Skeleton3D {
   showFrame(i) {
     if (!this.frames.length) return;
     this.frameIdx = i;
+    if (this.mode === "overlay") this._renderOverlay(i);
+    else this._render3D(i);
+  }
+
+  _renderOverlay(i) {
+    const frame = this.frames[i];
+    const ctx = this.ctx;
+    ctx.clearRect(0, 0, this.W, this.H);
+
+    if (!frame.raw2d) return;
+
+    // Compute the rect where the video is actually drawn (object-fit: contain).
+    // We need to mirror that math so the bones land on the person.
+    let drawW = this.W, drawH = this.H, offX = 0, offY = 0;
+    if (this.videoEl && this.videoEl.videoWidth) {
+      const vAR = this.videoEl.videoWidth / this.videoEl.videoHeight;
+      const cAR = this.W / this.H;
+      if (vAR > cAR) {
+        drawW = this.W;
+        drawH = this.W / vAR;
+        offY = (this.H - drawH) / 2;
+      } else {
+        drawH = this.H;
+        drawW = this.H * vAR;
+        offX = (this.W - drawW) / 2;
+      }
+    }
+
+    const proj = (p) => [offX + p.x * drawW, offY + p.y * drawH];
+
+    // bones
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(255, 91, 31, 0.95)";
+    ctx.lineWidth = 3;
+    for (const [a, b] of LM.CONNECTIONS) {
+      const pa = frame.raw2d[a], pb = frame.raw2d[b];
+      if (!pa || !pb) continue;
+      if (pa.score < 0.3 && pb.score < 0.3) continue;
+      const [ax, ay] = proj(pa), [bx, by] = proj(pb);
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+    }
+
+    // joints
+    for (let j = 0; j < 33; j++) {
+      const p = frame.raw2d[j];
+      if (!p) continue;
+      const [x, y] = proj(p);
+      ctx.fillStyle = `rgba(247, 201, 72, ${Math.max(0.3, p.score)})`;
+      ctx.beginPath();
+      ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  _render3D(i) {
     const frame = this.frames[i];
     const ctx = this.ctx;
     ctx.fillStyle = "#0a0908";
     ctx.fillRect(0, 0, this.W, this.H);
 
-    // ground grid
     this._drawGround();
 
-    // collect projected points
     const pts = frame.points.map(p => this._project([p.x, p.y, p.z]));
 
-    // bones
     ctx.lineCap = "round";
     for (const [a, b] of LM.CONNECTIONS) {
       const pa = pts[a], pb = pts[b];
@@ -147,7 +222,6 @@ export class Skeleton3D {
       ctx.stroke();
     }
 
-    // joints
     for (let j = 0; j < 33; j++) {
       const p = pts[j];
       const c = frame.points[j].score;

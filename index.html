@@ -122,10 +122,15 @@
     <h2 class="panel-title">03 · Preview & Export</h2>
 
     <div class="preview3d" id="preview3d">
+      <video id="previewVideo" playsinline muted></video>
       <canvas id="skeletonCanvas"></canvas>
       <div class="preview-overlay">
         <div class="frame-counter" id="frameCounter">— / —</div>
-        <div class="hint-overlay">drag to orbit · scroll to zoom</div>
+        <div class="hint-overlay" id="hintOverlay">drag to orbit · scroll to zoom</div>
+      </div>
+      <div class="view-toggle">
+        <button class="view-btn active" data-view="overlay">overlay</button>
+        <button class="view-btn" data-view="3d">3D orbit</button>
       </div>
     </div>
 

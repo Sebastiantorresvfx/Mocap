@@ -350,13 +350,56 @@ input[type="range"]::-moz-range-thumb {
   aspect-ratio: 4/3;
   overflow: hidden;
 }
+#previewVideo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  display: none;
+}
+.preview3d.mode-overlay #previewVideo { display: block; }
+.preview3d.mode-overlay { background: #000; }
 #skeletonCanvas {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   display: block;
   cursor: grab;
 }
+.preview3d.mode-overlay #skeletonCanvas { cursor: default; }
 #skeletonCanvas:active { cursor: grabbing; }
+
+.view-toggle {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 4px;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px;
+  z-index: 10;
+}
+.view-btn {
+  background: transparent;
+  border: none;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 5px 9px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.view-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
 .preview-overlay {
   position: absolute;
   inset: 0;

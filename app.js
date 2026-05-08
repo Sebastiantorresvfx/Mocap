@@ -23,6 +23,7 @@ const fpsVal = $("fpsVal"), smoothVal = $("smoothVal"),
       blendVal = $("blendVal"), confVal = $("confVal");
 const lockGround = $("lockGround"), lockRoot = $("lockRoot"),
       clampJoints = $("clampJoints");
+const vertSlider = $("vert"), vertVal = $("vertVal");
 const captureBtn = $("captureBtn"), cancelBtn = $("cancelBtn");
 const progress = $("progress"), progressFill = $("progressFill"),
       progressText = $("progressText");
@@ -243,6 +244,7 @@ bind(fpsSlider, fpsVal);
 bind(smoothSlider, smoothVal);
 bind(blendSlider, blendVal);
 bind(confSlider, confVal);
+bind(vertSlider, vertVal);
 
 // ---------------- capture pipeline ----------------
 captureBtn.addEventListener("click", startCapture);
@@ -422,6 +424,7 @@ function postProcess(frames) {
   const lockG = lockGround.checked;
   const lockR = lockRoot.checked;
   const clamp = clampJoints.checked;
+  const vertAmt = +vertSlider.value;
 
   // Compute foot Y baseline across all frames (lowest reliable Y)
   let groundY = Infinity;
@@ -481,6 +484,11 @@ function postProcess(frames) {
     // 4. Anatomical joint angle limits — applied as bone-length preservation
     //    + cone limits on knees/elbows (no hyperextension)
     if (clamp) applyJointLimits(f);
+
+    // 5. Verticality lock: damp Z toward rest pose Z, then re-align spine
+    //    with world up. This kills the "leaning toward camera" artifact
+    //    from monocular depth ambiguity.
+    if (vertAmt > 0.001) applyVerticality(f, vertAmt);
   }
 
   // meta
@@ -488,6 +496,56 @@ function postProcess(frames) {
   metaFrames.textContent = frames.length;
   metaDur.textContent = (frames.length / +fpsSlider.value).toFixed(2) + "s";
   metaConf.textContent = avgConf.toFixed(3);
+}
+
+function applyVerticality(f, amount) {
+  // Step A: damp each joint's Z toward its rest-pose Z.
+  // amount=0 → pure raw depth, amount=1 → fully flat at rest Z.
+  for (let j = 0; j < 33; j++) {
+    const p = f.points[j];
+    const restZ = REST_POSE[j][2];
+    p.z = p.z * (1 - amount) + restZ * amount;
+  }
+
+  // Step B: rotate the whole skeleton so spine (hip-mid → shoulder-mid)
+  // points along world +Y. This corrects the "leaning toward camera"
+  // tilt left over from monocular depth ambiguity. Apply at full strength
+  // when amount > 0 — the slider controls the Z-damp, this is a hard fix.
+  const lh = f.points[LM.LEFT_HIP], rh = f.points[LM.RIGHT_HIP];
+  const ls = f.points[LM.LEFT_SHOULDER], rs = f.points[LM.RIGHT_SHOULDER];
+  const hipMid  = [(lh.x+rh.x)/2, (lh.y+rh.y)/2, (lh.z+rh.z)/2];
+  const shMid   = [(ls.x+rs.x)/2, (ls.y+rs.y)/2, (ls.z+rs.z)/2];
+  const spine   = [shMid[0]-hipMid[0], shMid[1]-hipMid[1], shMid[2]-hipMid[2]];
+  const spineLen = Math.hypot(spine[0], spine[1], spine[2]);
+  if (spineLen < 1e-4) return;
+
+  // Compute the rotation that takes current spine direction to world up (0,1,0)
+  const sn = [spine[0]/spineLen, spine[1]/spineLen, spine[2]/spineLen];
+  const up = [0, 1, 0];
+  // axis = sn × up
+  const ax = [sn[1]*up[2]-sn[2]*up[1], sn[2]*up[0]-sn[0]*up[2], sn[0]*up[1]-sn[1]*up[0]];
+  const axLen = Math.hypot(ax[0], ax[1], ax[2]);
+  if (axLen < 1e-4) return;        // already vertical
+  const axisN = [ax[0]/axLen, ax[1]/axLen, ax[2]/axLen];
+  const cosA = sn[0]*up[0] + sn[1]*up[1] + sn[2]*up[2];
+  const angle = Math.atan2(axLen, cosA);
+  // Apply only a fraction of the rotation, scaled by the verticality slider
+  const theta = angle * amount;
+  const c = Math.cos(theta), s = Math.sin(theta), C = 1 - c;
+  const [kx, ky, kz] = axisN;
+  // Rodrigues rotation, applied around hipMid as pivot
+  const R = [
+    c + kx*kx*C,    kx*ky*C - kz*s, kx*kz*C + ky*s,
+    ky*kx*C + kz*s, c + ky*ky*C,    ky*kz*C - kx*s,
+    kz*kx*C - ky*s, kz*ky*C + kx*s, c + kz*kz*C,
+  ];
+  for (let j = 0; j < 33; j++) {
+    const p = f.points[j];
+    const dx = p.x - hipMid[0], dy = p.y - hipMid[1], dz = p.z - hipMid[2];
+    p.x = hipMid[0] + R[0]*dx + R[1]*dy + R[2]*dz;
+    p.y = hipMid[1] + R[3]*dx + R[4]*dy + R[5]*dz;
+    p.z = hipMid[2] + R[6]*dx + R[7]*dy + R[8]*dz;
+  }
 }
 
 function applyJointLimits(f) {

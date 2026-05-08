@@ -81,7 +81,26 @@ export class Skeleton3D {
     }, { passive: false });
   }
 
-  setFrames(frames) { this.frames = frames; }
+  setFrames(frames) {
+    this.frames = frames;
+    // Auto-frame: front-on view, scaled so the character fits cleanly
+    this.yaw = 0;
+    this.pitch = -0.05;
+    if (frames.length) {
+      let minY = Infinity, maxY = -Infinity, maxR = 0;
+      for (const f of frames) {
+        for (const p of f.points) {
+          if (p.y < minY) minY = p.y;
+          if (p.y > maxY) maxY = p.y;
+          const r = Math.hypot(p.x, p.z);
+          if (r > maxR) maxR = r;
+        }
+      }
+      const height = Math.max(0.1, maxY - minY);
+      // zoom so character height ~70% of viewport
+      this.zoom = 0.7 / Math.max(height, maxR * 1.5);
+    }
+  }
 
   _project(p) {
     // yaw rotation around Y, then pitch around X

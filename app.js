@@ -407,13 +407,27 @@ async function startCapture() {
     if (i % 5 === 0) await new Promise(r => setTimeout(r, 0));
   }
 
-  // Post-process: fill rest blend, joint limits, ground/root lock
-  postProcess(frames);
+  // Post-process: fill rest blend, joint limits, ground/root lock,
+  // foot leveling, FK solve, and rotation smoothing.
+  let postProcessOk = true;
+  try {
+    postProcess(frames);
+  } catch (e) {
+    postProcessOk = false;
+    diag(`✗ post-process error: ${(e && e.message) || e}`);
+    diag(`  stack: ${(e && e.stack || "").slice(0, 200)}`);
+    console.error("postProcess threw:", e);
+  }
 
   capturing = false;
   captureBtn.hidden = false;
   cancelBtn.hidden = true;
   progress.hidden = true;
+
+  if (!postProcessOk) {
+    setStatus("err", "post-process failed · tap status for log");
+    return;
+  }
 
   if (frames.length > 0) {
     setStatus("ready", `captured ${frames.length} frames`);

@@ -133,6 +133,7 @@ html, body {
 
 /* ---------- dropzone ---------- */
 .dropzone {
+  display: block;
   border: 1.5px dashed var(--line);
   border-radius: 4px;
   padding: 32px 16px;
@@ -140,6 +141,12 @@ html, body {
   cursor: pointer;
   transition: all .25s;
   background: var(--bg-2);
+}
+.dropzone input[type="file"] {
+  position: absolute;
+  width: 1px; height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 .dropzone:hover, .dropzone.over {
   border-color: var(--accent);

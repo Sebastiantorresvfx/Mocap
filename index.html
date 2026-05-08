@@ -31,14 +31,14 @@
   <section class="panel input-panel">
     <h2 class="panel-title">01 · Input</h2>
 
-    <div class="dropzone" id="dropzone">
-      <input type="file" id="videoFile" accept="video/*" hidden />
+    <label class="dropzone" id="dropzone" for="videoFile">
+      <input type="file" id="videoFile" accept="video/*" />
       <div class="dz-inner">
         <div class="dz-icon">⤓</div>
         <div class="dz-label">Drop a video here</div>
-        <div class="dz-sub">or click to browse · mp4 / webm / mov</div>
+        <div class="dz-sub">or tap to browse · mp4 / webm / mov</div>
       </div>
-    </div>
+    </label>
 
     <div class="video-wrap">
       <video id="video" playsinline muted></video>

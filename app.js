@@ -55,23 +55,35 @@ async function initModel() {
     const fileset = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/[email protected]/wasm"
     );
-    landmarker = await PoseLandmarker.createFromOptions(fileset, {
-      baseOptions: {
-        modelAssetPath:
-          "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
-        delegate: "GPU",
-      },
-      runningMode: "VIDEO",
-      numPoses: 1,
-      minPoseDetectionConfidence: 0.5,
-      minPosePresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-      outputSegmentationMasks: false,
-    });
-    setStatus("ready", "model ready · load a video");
+    // Try GPU delegate first; iOS Safari often needs CPU fallback.
+    let lastErr = null;
+    for (const delegate of ["GPU", "CPU"]) {
+      try {
+        landmarker = await PoseLandmarker.createFromOptions(fileset, {
+          baseOptions: {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+            delegate,
+          },
+          runningMode: "VIDEO",
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.5,
+          minPosePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+          outputSegmentationMasks: false,
+        });
+        setStatus("ready", `model ready (${delegate.toLowerCase()}) · load a video`);
+        if (videoLoaded) captureBtn.disabled = false;
+        return;
+      } catch (e) {
+        lastErr = e;
+        console.warn(`MediaPipe ${delegate} init failed:`, e);
+      }
+    }
+    throw lastErr || new Error("unknown init error");
   } catch (e) {
     console.error(e);
-    setStatus("err", "model failed: " + e.message);
+    setStatus("err", "model failed: " + (e.message || e).slice(0, 80));
   }
 }
 
@@ -92,7 +104,6 @@ function loadVideoFile(file) {
   };
 }
 
-dropzone.addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", (e) => loadVideoFile(e.target.files[0]));
 dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("over"); });
 dropzone.addEventListener("dragleave", () => dropzone.classList.remove("over"));

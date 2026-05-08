@@ -19,7 +19,7 @@ const video = $("video"), overlay = $("overlay");
 const playBtn = $("playBtn"), scrub = $("scrub"), timeEl = $("time");
 const fpsSlider = $("fps"), smoothSlider = $("smooth"),
       blendSlider = $("blend"), confSlider = $("conf");
-const fpsVal = $("fpsVal"), smoothVal = $("smoothVal"),
+const smoothVal = $("smoothVal"),
       blendVal = $("blendVal"), confVal = $("confVal");
 const lockGround = $("lockGround"), lockRoot = $("lockRoot"),
       clampJoints = $("clampJoints");
@@ -241,16 +241,74 @@ scrub.addEventListener("input", (e) => {
   video.currentTime = (e.target.value / 100) * video.duration;
 });
 
-// ---------------- slider readouts ----------------
+// Slider readouts
 const bind = (s, v, fmt = (x) => x) => {
   v.textContent = fmt(s.value);
   s.addEventListener("input", () => v.textContent = fmt(s.value));
 };
-bind(fpsSlider, fpsVal);
 bind(smoothSlider, smoothVal);
 bind(blendSlider, blendVal);
 bind(confSlider, confVal);
 bind(vertSlider, vertVal);
+
+// Segmented controls (FPS, aspect)
+function bindSeg(id, onChange) {
+  document.querySelectorAll(`#${id} button`).forEach(b => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(`#${id} button`).forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+      onChange(b.dataset.val);
+    });
+  });
+}
+bindSeg("fpsSeg", (v) => { fpsSlider.value = v; });
+bindSeg("aspectSeg", (v) => {
+  const wrap = document.getElementById("preview3d");
+  if (!wrap) return;
+  wrap.classList.remove("aspect-9-16","aspect-16-9","aspect-1-1");
+  wrap.classList.add("aspect-" + v.replace(":", "-"));
+  if (skel) skel._resize();
+});
+
+// Device → horizontal FOV (degrees)
+// Computed from sensor width & focal length: FOV = 2 * atan(sw / (2*f))
+// iPhone main wide ~ 26mm equiv → ~73° horiz on 4:3, ~63° on 16:9.
+// We give *vertical-shoot effective* H-FOV values which is what we actually project with.
+const DEVICE_HFOV = {
+  "iphone15-main":      67,   // 26mm equiv main, vertical shoot
+  "iphone15-ultrawide": 106,  // 13mm ultrawide
+  "iphone15-tele3x":    24,   // 77mm tele
+  "iphone15-tele5x":    16,   // 120mm tele
+  "iphone-front":       72,   // 23mm equiv front
+  "generic-50":         40,   // 50mm full-frame ≈ 40° H
+  "generic-35":         54,
+};
+let currentHFOV = DEVICE_HFOV["iphone15-main"];
+
+const deviceSel = document.getElementById("device");
+const fovSlider = document.getElementById("fov");
+const fovVal    = document.getElementById("fovVal");
+const customFovWrap = document.getElementById("customFovWrap");
+deviceSel.addEventListener("change", () => {
+  if (deviceSel.value === "custom") {
+    customFovWrap.style.display = "";
+    currentHFOV = +fovSlider.value;
+  } else {
+    customFovWrap.style.display = "none";
+    currentHFOV = DEVICE_HFOV[deviceSel.value] ?? 67;
+  }
+  if (skel) { skel.setHFOV(currentHFOV); skel.showFrame(skel.frameIdx); }
+});
+fovSlider.addEventListener("input", () => {
+  fovVal.textContent = fovSlider.value + "°";
+  if (deviceSel.value === "custom") {
+    currentHFOV = +fovSlider.value;
+    if (skel) { skel.setHFOV(currentHFOV); skel.showFrame(skel.frameIdx); }
+  }
+});
+
+// Initialize aspect default
+document.getElementById("preview3d")?.classList.add("aspect-9-16");
 
 // ---------------- capture pipeline ----------------
 captureBtn.addEventListener("click", startCapture);
@@ -630,16 +688,31 @@ function initSkeletonPreview() {
   if (!skel) skel = new Skeleton3D(skeletonCanvas);
   const pv = document.getElementById("previewVideo");
   skel.setVideoElement(pv);
+  skel.setHFOV(currentHFOV);
   skel.setFrames(frames);
   frameScrub.disabled = false;
   previewPlay.disabled = false;
   frameScrub.max = frames.length - 1;
   frameScrub.value = 0;
-  syncPreviewVideo(0);
-  skel.showFrame(0);
-  frameCounter.textContent = `1 / ${frames.length}`;
-  // default to overlay mode
+
+  // Default to overlay mode so user can validate alignment first
+  document.querySelectorAll(".view-btn").forEach(b => b.classList.remove("active"));
+  document.querySelector('.view-btn[data-view="overlay"]')?.classList.add("active");
   document.getElementById("preview3d").classList.add("mode-overlay");
+  skel.setMode("overlay");
+
+  // Prime the preview video so iOS will actually render frames on seek
+  if (pv) {
+    pv.muted = true;
+    pv.playsInline = true;
+    pv.play().then(() => pv.pause()).catch(() => {});
+  }
+
+  setTimeout(() => {
+    syncPreviewVideo(0);
+    skel.showFrame(0);
+  }, 100);
+  frameCounter.textContent = `1 / ${frames.length}`;
 }
 
 function syncPreviewVideo(frameIdx) {

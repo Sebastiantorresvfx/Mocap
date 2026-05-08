@@ -211,6 +211,54 @@ html, body {
   flex-direction: column;
   gap: 18px;
 }
+.seg {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--bg-2);
+}
+.seg button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--line);
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 9px 6px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.seg button:last-child { border-right: none; }
+.seg button:hover { color: var(--ink); }
+.seg button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+select {
+  width: 100%;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 9px 10px;
+  border-radius: 3px;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239a9387' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+select:focus { border-color: var(--accent); }
+
 .control {
   display: flex;
   flex-direction: column;
@@ -349,7 +397,12 @@ input[type="range"]::-moz-range-thumb {
   border: 1px solid var(--line);
   aspect-ratio: 4/3;
   overflow: hidden;
+  max-height: 70vh;
+  margin: 0 auto;
 }
+.preview3d.aspect-9-16 { aspect-ratio: 9/16; max-width: 360px; }
+.preview3d.aspect-16-9 { aspect-ratio: 16/9; }
+.preview3d.aspect-1-1  { aspect-ratio: 1/1; max-width: 480px; }
 #previewVideo {
   position: absolute;
   inset: 0;

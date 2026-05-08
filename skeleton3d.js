@@ -12,12 +12,13 @@ export class Skeleton3D {
     this.ctx = canvas.getContext("2d");
     this.frames = [];
     this.frameIdx = 0;
-    this.mode = "overlay";   // default to overlay so user sees alignment first
+    this.mode = "overlay";
 
-    // camera (3d mode)
-    this.yaw = 0.4;
-    this.pitch = -0.15;
-    this.zoom = 1.0;
+    // perspective camera
+    this.hFov = 67;            // horizontal field of view (degrees)
+    this.camDist = 3.0;        // metres from origin
+    this.yaw = 0;
+    this.pitch = -0.05;
     this.panY = 0;
 
     // video element used in overlay mode (set externally)
@@ -34,6 +35,7 @@ export class Skeleton3D {
   }
 
   setVideoElement(el) { this.videoEl = el; }
+  setHFOV(deg) { this.hFov = deg; }
 
   _resize() {
     const dpr = window.devicePixelRatio || 1;
@@ -65,8 +67,8 @@ export class Skeleton3D {
     this.canvas.addEventListener("wheel", (e) => {
       if (this.mode !== "3d") return;
       e.preventDefault();
-      this.zoom *= (1 - e.deltaY * 0.001);
-      this.zoom = Math.max(0.3, Math.min(3, this.zoom));
+      this.camDist *= (1 + e.deltaY * 0.001);
+      this.camDist = Math.max(0.5, Math.min(20, this.camDist));
       this.showFrame(this.frameIdx);
     }, { passive: false });
 
@@ -93,8 +95,8 @@ export class Skeleton3D {
         const d = Math.hypot(
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY);
-        this.zoom *= d / (pinchDist || d);
-        this.zoom = Math.max(0.3, Math.min(3, this.zoom));
+        this.camDist *= (pinchDist || d) / d;
+        this.camDist = Math.max(0.5, Math.min(20, this.camDist));
         pinchDist = d;
       }
       this.showFrame(this.frameIdx);
@@ -103,7 +105,6 @@ export class Skeleton3D {
 
   setFrames(frames) {
     this.frames = frames;
-    // Auto-frame: front-on view, scaled so the character fits cleanly
     this.yaw = 0;
     this.pitch = -0.05;
     if (frames.length) {
@@ -116,27 +117,35 @@ export class Skeleton3D {
           if (r > maxR) maxR = r;
         }
       }
-      const height = Math.max(0.1, maxY - minY);
-      // zoom so character height ~70% of viewport
-      this.zoom = 0.7 / Math.max(height, maxR * 1.5);
+      const height = Math.max(0.5, maxY - minY);
+      // Place camera so character vertically fills ~70% of frame at given FOV.
+      // Vertical FOV from horizontal FOV + aspect ratio.
+      const aspect = this.W / this.H;
+      const hFovRad = this.hFov * Math.PI / 180;
+      const vFovRad = 2 * Math.atan(Math.tan(hFovRad / 2) / aspect);
+      this.camDist = (height * 0.7) / (2 * Math.tan(vFovRad / 2));
+      this.camDist = Math.max(this.camDist, maxR * 1.5 + 1.0);
     }
   }
 
   _project(p) {
-    // yaw rotation around Y, then pitch around X
+    // Yaw + pitch rotation around origin (character pivot)
     const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
     let x = p[0]*cy - p[2]*sy;
     let z = p[0]*sy + p[2]*cy;
-    let y = p[1]*cp - z*sp;
-    z = p[1]*sp + z*cp;
-    // orthographic
-    const s = (this.H * 0.35) * this.zoom;
-    return [
-      this.W / 2 + x * s,
-      this.H * 0.55 - y * s + this.panY,
-      z
-    ];
+    let y = p[1];
+    const y2 = y*cp - z*sp;
+    const z2 = y*sp + z*cp;
+    y = y2; z = z2;
+    // Camera at (0, 0, camDist), looking toward -z
+    const cz = this.camDist - z;
+    if (cz < 0.01) return [0, 0, cz];
+    const hFovRad = this.hFov * Math.PI / 180;
+    const f = (this.W / 2) / Math.tan(hFovRad / 2);
+    const sx = (this.W / 2) + (x * f) / cz;
+    const sy2 = (this.H / 2) - (y * f) / cz + this.panY;
+    return [sx, sy2, cz];
   }
 
   showFrame(i) {

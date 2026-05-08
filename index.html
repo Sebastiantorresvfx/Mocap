@@ -61,8 +61,41 @@
     <div class="controls">
 
       <div class="control">
-        <label>FPS sample <span class="val" id="fpsVal">30</span></label>
-        <input type="range" id="fps" min="10" max="60" value="30" step="1" />
+        <label>FPS sample</label>
+        <div class="seg" id="fpsSeg">
+          <button data-val="24">24</button>
+          <button data-val="25">25</button>
+          <button data-val="30" class="active">30</button>
+        </div>
+        <input type="hidden" id="fps" value="30" />
+      </div>
+
+      <div class="control">
+        <label>Source aspect</label>
+        <div class="seg" id="aspectSeg">
+          <button data-val="9:16" class="active">9:16 vertical</button>
+          <button data-val="16:9">16:9 horizontal</button>
+          <button data-val="1:1">1:1 square</button>
+        </div>
+      </div>
+
+      <div class="control">
+        <label>Device (camera FOV)</label>
+        <select id="device">
+          <option value="iphone15-main"  selected>iPhone 15/Pro · main 26mm</option>
+          <option value="iphone15-ultrawide">iPhone 15/Pro · ultrawide 13mm</option>
+          <option value="iphone15-tele3x">iPhone 15 Pro · tele 77mm</option>
+          <option value="iphone15-tele5x">iPhone 15 Pro Max · tele 120mm</option>
+          <option value="iphone-front">iPhone front 23mm</option>
+          <option value="generic-50">Generic 50mm</option>
+          <option value="generic-35">Generic 35mm</option>
+          <option value="custom">Custom…</option>
+        </select>
+      </div>
+
+      <div class="control" id="customFovWrap" style="display:none;">
+        <label>Custom horizontal FOV <span class="val" id="fovVal">70°</span></label>
+        <input type="range" id="fov" min="20" max="120" value="70" step="1" />
       </div>
 
       <div class="control">

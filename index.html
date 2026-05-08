@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ARCMOCAP — Monocular Motion Capture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="grain"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">▲</span>
+    <span class="name">ARCMOCAP</span>
+    <span class="ver">v0.1 · monocular pose → BVH</span>
+  </div>
+  <div class="status" id="status">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">awaiting model</span>
+  </div>
+</header>
+
+<main class="grid">
+
+  <!-- LEFT: input -->
+  <section class="panel input-panel">
+    <h2 class="panel-title">01 · Input</h2>
+
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="videoFile" accept="video/*" hidden />
+      <div class="dz-inner">
+        <div class="dz-icon">⤓</div>
+        <div class="dz-label">Drop a video here</div>
+        <div class="dz-sub">or click to browse · mp4 / webm / mov</div>
+      </div>
+    </div>
+
+    <div class="video-wrap">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
+    </div>
+
+    <div class="transport">
+      <button id="playBtn" class="btn ghost" disabled>▶ play</button>
+      <input type="range" id="scrub" min="0" max="100" value="0" step="0.1" disabled />
+      <span class="time" id="time">0.00 / 0.00</span>
+    </div>
+  </section>
+
+  <!-- CENTER: capture controls + preview -->
+  <section class="panel capture-panel">
+    <h2 class="panel-title">02 · Capture</h2>
+
+    <div class="controls">
+
+      <div class="control">
+        <label>FPS sample <span class="val" id="fpsVal">30</span></label>
+        <input type="range" id="fps" min="10" max="60" value="30" step="1" />
+      </div>
+
+      <div class="control">
+        <label>Smoothing <span class="val" id="smoothVal">0.55</span></label>
+        <input type="range" id="smooth" min="0" max="0.95" value="0.55" step="0.01" />
+        <div class="hint">One Euro filter strength · higher = smoother arcs</div>
+      </div>
+
+      <div class="control">
+        <label>Rest blend <span class="val" id="blendVal">0.35</span></label>
+        <input type="range" id="blend" min="0" max="0.9" value="0.35" step="0.01" />
+        <div class="hint">Pull low-confidence joints toward standing rest</div>
+      </div>
+
+      <div class="control">
+        <label>Confidence floor <span class="val" id="confVal">0.5</span></label>
+        <input type="range" id="conf" min="0.1" max="0.9" value="0.5" step="0.01" />
+      </div>
+
+      <div class="control toggles">
+        <label class="check">
+          <input type="checkbox" id="lockGround" checked />
+          <span>Lock to ground plane</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="lockRoot" checked />
+          <span>Lock root translation</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="clampJoints" checked />
+          <span>Anatomical joint limits</span>
+        </label>
+      </div>
+
+    </div>
+
+    <div class="actions">
+      <button id="captureBtn" class="btn primary" disabled>● capture motion</button>
+      <button id="cancelBtn" class="btn ghost" hidden>cancel</button>
+    </div>
+
+    <div class="progress" id="progress" hidden>
+      <div class="progress-bar"><div id="progressFill"></div></div>
+      <div class="progress-text" id="progressText">processing frame 0 / 0</div>
+    </div>
+
+  </section>
+
+  <!-- RIGHT: preview + export -->
+  <section class="panel preview-panel">
+    <h2 class="panel-title">03 · Preview & Export</h2>
+
+    <div class="preview3d" id="preview3d">
+      <canvas id="skeletonCanvas"></canvas>
+      <div class="preview-overlay">
+        <div class="frame-counter" id="frameCounter">— / —</div>
+        <div class="hint-overlay">drag to orbit · scroll to zoom</div>
+      </div>
+    </div>
+
+    <div class="playback">
+      <button id="previewPlay" class="btn ghost" disabled>▶ preview</button>
+      <input type="range" id="frameScrub" min="0" max="100" value="0" disabled />
+    </div>
+
+    <div class="export">
+      <button id="exportBVH" class="btn primary" disabled>↓ export BVH</button>
+      <button id="exportJSON" class="btn ghost" disabled>↓ export JSON</button>
+    </div>
+
+    <div class="meta" id="meta">
+      <div class="meta-row"><span>frames</span><span id="metaFrames">—</span></div>
+      <div class="meta-row"><span>duration</span><span id="metaDur">—</span></div>
+      <div class="meta-row"><span>avg confidence</span><span id="metaConf">—</span></div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <span>built on MediaPipe Pose · One Euro Filter · runs entirely in your browser</span>
+  <span class="foot-r">no upload · no server · no telemetry</span>
+</footer>
+
+<!-- MediaPipe Tasks Vision -->
+<script type="module" src="app.js"></script>
+
+</body>
+</html>

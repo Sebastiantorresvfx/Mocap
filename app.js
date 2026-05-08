@@ -1,0 +1,468 @@
+// ARCMOCAP — monocular pose → BVH
+// Pipeline: MediaPipe Pose → confidence-weighted blend → joint clamping
+//           → One Euro smoothing → ground/root lock → BVH export
+
+import { PoseLandmarker, FilesetResolver }
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/[email protected]";
+
+import { OneEuroFilter } from "./oneEuro.js";
+import { exportBVH } from "./bvh.js";
+import { Skeleton3D }  from "./skeleton3d.js";
+import { LM, REST_POSE, JOINT_LIMITS } from "./skeletonDef.js";
+
+// ---------------- DOM ----------------
+const $ = (id) => document.getElementById(id);
+
+const dropzone = $("dropzone"), fileInput = $("videoFile");
+const video = $("video"), overlay = $("overlay");
+const playBtn = $("playBtn"), scrub = $("scrub"), timeEl = $("time");
+const fpsSlider = $("fps"), smoothSlider = $("smooth"),
+      blendSlider = $("blend"), confSlider = $("conf");
+const fpsVal = $("fpsVal"), smoothVal = $("smoothVal"),
+      blendVal = $("blendVal"), confVal = $("confVal");
+const lockGround = $("lockGround"), lockRoot = $("lockRoot"),
+      clampJoints = $("clampJoints");
+const captureBtn = $("captureBtn"), cancelBtn = $("cancelBtn");
+const progress = $("progress"), progressFill = $("progressFill"),
+      progressText = $("progressText");
+const exportBVHBtn = $("exportBVH"), exportJSONBtn = $("exportJSON");
+const statusEl = $("status"), statusText = $("statusText");
+const previewPlay = $("previewPlay"), frameScrub = $("frameScrub");
+const frameCounter = $("frameCounter");
+const metaFrames = $("metaFrames"), metaDur = $("metaDur"), metaConf = $("metaConf");
+const skeletonCanvas = $("skeletonCanvas"), overlayCtx = overlay.getContext("2d");
+
+// ---------------- state ----------------
+let landmarker = null;
+let videoLoaded = false;
+let capturing = false;
+let cancelFlag = false;
+let frames = [];      // captured & post-processed frames
+let rawFrames = [];   // raw landmarker output (debug)
+let skel = null;
+
+// ---------------- status ----------------
+function setStatus(s, msg) {
+  statusEl.classList.remove("ready","busy","err");
+  if (s) statusEl.classList.add(s);
+  statusText.textContent = msg;
+}
+
+// ---------------- model init ----------------
+async function initModel() {
+  setStatus("busy", "loading model");
+  try {
+    const fileset = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/[email protected]/wasm"
+    );
+    landmarker = await PoseLandmarker.createFromOptions(fileset, {
+      baseOptions: {
+        modelAssetPath:
+          "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+        delegate: "GPU",
+      },
+      runningMode: "VIDEO",
+      numPoses: 1,
+      minPoseDetectionConfidence: 0.5,
+      minPosePresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+      outputSegmentationMasks: false,
+    });
+    setStatus("ready", "model ready · load a video");
+  } catch (e) {
+    console.error(e);
+    setStatus("err", "model failed: " + e.message);
+  }
+}
+
+// ---------------- file loading ----------------
+function loadVideoFile(file) {
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  video.src = url;
+  video.onloadedmetadata = () => {
+    overlay.width = video.videoWidth;
+    overlay.height = video.videoHeight;
+    videoLoaded = true;
+    playBtn.disabled = false;
+    scrub.disabled = false;
+    captureBtn.disabled = !landmarker;
+    timeEl.textContent = `0.00 / ${video.duration.toFixed(2)}`;
+    setStatus("ready", "video loaded · ready to capture");
+  };
+}
+
+dropzone.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", (e) => loadVideoFile(e.target.files[0]));
+dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("over"); });
+dropzone.addEventListener("dragleave", () => dropzone.classList.remove("over"));
+dropzone.addEventListener("drop", (e) => {
+  e.preventDefault(); dropzone.classList.remove("over");
+  loadVideoFile(e.dataTransfer.files[0]);
+});
+
+// ---------------- video transport ----------------
+playBtn.addEventListener("click", () => {
+  if (video.paused) { video.play(); playBtn.textContent = "❚❚ pause"; }
+  else { video.pause(); playBtn.textContent = "▶ play"; }
+});
+video.addEventListener("timeupdate", () => {
+  scrub.value = (video.currentTime / video.duration) * 100;
+  timeEl.textContent = `${video.currentTime.toFixed(2)} / ${video.duration.toFixed(2)}`;
+});
+scrub.addEventListener("input", (e) => {
+  video.currentTime = (e.target.value / 100) * video.duration;
+});
+
+// ---------------- slider readouts ----------------
+const bind = (s, v, fmt = (x) => x) => {
+  v.textContent = fmt(s.value);
+  s.addEventListener("input", () => v.textContent = fmt(s.value));
+};
+bind(fpsSlider, fpsVal);
+bind(smoothSlider, smoothVal);
+bind(blendSlider, blendVal);
+bind(confSlider, confVal);
+
+// ---------------- capture pipeline ----------------
+captureBtn.addEventListener("click", startCapture);
+cancelBtn.addEventListener("click", () => { cancelFlag = true; });
+
+async function startCapture() {
+  if (!landmarker || !videoLoaded || capturing) return;
+  capturing = true;
+  cancelFlag = false;
+  captureBtn.hidden = true;
+  cancelBtn.hidden = false;
+  progress.hidden = false;
+
+  const fps = +fpsSlider.value;
+  const dt = 1.0 / fps;
+  const dur = video.duration;
+  const total = Math.floor(dur * fps);
+
+  rawFrames = [];
+  frames = [];
+
+  const minCutoff = 1.0 - 0.95 * (+smoothSlider.value);   // ~1.0..0.05
+  const beta = 0.05 + (+smoothSlider.value) * 0.5;        // adaptive
+  const filters = LM.NAMES.map(() => ({
+    x: new OneEuroFilter(fps, minCutoff, beta, 1.0),
+    y: new OneEuroFilter(fps, minCutoff, beta, 1.0),
+    z: new OneEuroFilter(fps, minCutoff, beta, 1.0),
+  }));
+
+  setStatus("busy", "capturing");
+
+  for (let i = 0; i < total; i++) {
+    if (cancelFlag) break;
+
+    const t = i * dt;
+    await seekVideo(t);
+
+    const result = landmarker.detectForVideo(video, performance.now());
+    let lms = null;
+    if (result.landmarks && result.landmarks.length > 0) {
+      lms = result.landmarks[0];   // 0..1 normalized 2D + pseudo-z
+    }
+    rawFrames.push(lms);
+
+    // Build a 33-joint world frame (centered, scaled, smoothed)
+    const frame = processFrame(lms, filters, i, dt);
+    frames.push(frame);
+
+    progressFill.style.width = `${(i / total) * 100}%`;
+    progressText.textContent = `processing frame ${i + 1} / ${total}`;
+  }
+
+  // Post-process: fill rest blend, joint limits, ground/root lock
+  postProcess(frames);
+
+  capturing = false;
+  captureBtn.hidden = false;
+  cancelBtn.hidden = true;
+  progress.hidden = true;
+
+  if (frames.length > 0) {
+    setStatus("ready", `captured ${frames.length} frames`);
+    enableExport();
+    initSkeletonPreview();
+  } else {
+    setStatus("err", "no frames captured");
+  }
+}
+
+function seekVideo(t) {
+  return new Promise((resolve) => {
+    const onSeek = () => { video.removeEventListener("seeked", onSeek); resolve(); };
+    video.addEventListener("seeked", onSeek);
+    video.currentTime = Math.min(t, video.duration - 0.001);
+  });
+}
+
+// MediaPipe gives normalized 0..1 image coords + z (depth in image-plane meters,
+// with hip-midpoint as origin and roughly the same scale as x).
+// We convert to a centered, Y-up coordinate system in meters-ish.
+function processFrame(lms, filters, frameIdx, dt) {
+  const out = {
+    points: new Array(33),     // {x,y,z,score}
+    rest: false,
+  };
+  if (!lms) {
+    // Fully missing — mark rest
+    for (let j = 0; j < 33; j++) {
+      out.points[j] = { x: REST_POSE[j][0], y: REST_POSE[j][1], z: REST_POSE[j][2], score: 0 };
+    }
+    out.rest = true;
+    return out;
+  }
+
+  // Hip midpoint as origin
+  const lh = lms[LM.LEFT_HIP], rh = lms[LM.RIGHT_HIP];
+  const hipX = (lh.x + rh.x) / 2;
+  const hipY = (lh.y + rh.y) / 2;
+  const hipZ = (lh.z + rh.z) / 2;
+
+  // Scale: shoulder-to-hip distance for normalization
+  const ls = lms[LM.LEFT_SHOULDER], rs = lms[LM.RIGHT_SHOULDER];
+  const shX = (ls.x + rs.x) / 2;
+  const shY = (ls.y + rs.y) / 2;
+  let torso = Math.hypot(shX - hipX, shY - hipY);
+  if (torso < 0.05) torso = 0.05;
+  const scale = 0.5 / torso;
+
+  const t = frameIdx * dt;
+  for (let j = 0; j < 33; j++) {
+    const p = lms[j];
+    const score = p.visibility ?? 1.0;
+    // Convert: x right, y up (flip), z forward
+    const x = (p.x - hipX) * scale;
+    const y = -(p.y - hipY) * scale;
+    const z = (p.z - hipZ) * scale;
+    // Smooth
+    const sx = filters[j].x.filter(x, t);
+    const sy = filters[j].y.filter(y, t);
+    const sz = filters[j].z.filter(z, t);
+    out.points[j] = { x: sx, y: sy, z: sz, score };
+  }
+  return out;
+}
+
+function postProcess(frames) {
+  const blendAmt = +blendSlider.value;
+  const confFloor = +confSlider.value;
+  const lockG = lockGround.checked;
+  const lockR = lockRoot.checked;
+  const clamp = clampJoints.checked;
+
+  // Compute foot Y baseline across all frames (lowest reliable Y)
+  let groundY = Infinity;
+  for (const f of frames) {
+    if (f.rest) continue;
+    const ly = f.points[LM.LEFT_FOOT_INDEX].y;
+    const ry = f.points[LM.RIGHT_FOOT_INDEX].y;
+    const c1 = f.points[LM.LEFT_FOOT_INDEX].score;
+    const c2 = f.points[LM.RIGHT_FOOT_INDEX].score;
+    if (c1 > 0.5 && ly < groundY) groundY = ly;
+    if (c2 > 0.5 && ry < groundY) groundY = ry;
+  }
+  if (!isFinite(groundY)) groundY = -1.0;
+
+  let totalConf = 0, totalCount = 0;
+
+  for (const f of frames) {
+    // 1. Blend low-confidence joints toward rest pose
+    for (let j = 0; j < 33; j++) {
+      const p = f.points[j];
+      const rest = REST_POSE[j];
+      let w = 0;
+      if (p.score < confFloor) {
+        // strong pull toward rest
+        w = blendAmt + (1 - blendAmt) * (1 - p.score / confFloor);
+      } else {
+        // gentle pull at chosen blend amount
+        w = blendAmt * (1 - (p.score - confFloor) / (1 - confFloor + 0.001));
+      }
+      w = Math.min(0.95, Math.max(0, w));
+      p.x = p.x * (1 - w) + rest[0] * w;
+      p.y = p.y * (1 - w) + rest[1] * w;
+      p.z = p.z * (1 - w) + rest[2] * w;
+      totalConf += p.score; totalCount++;
+    }
+
+    // 2. Lock root translation: re-center hips at origin
+    if (lockR) {
+      const lh = f.points[LM.LEFT_HIP], rh = f.points[LM.RIGHT_HIP];
+      const cx = (lh.x + rh.x) / 2;
+      const cz = (lh.z + rh.z) / 2;
+      for (let j = 0; j < 33; j++) {
+        f.points[j].x -= cx;
+        f.points[j].z -= cz;
+      }
+    }
+
+    // 3. Lock ground plane: shift so feet sit at y=0
+    if (lockG) {
+      const ly = f.points[LM.LEFT_FOOT_INDEX].y;
+      const ry = f.points[LM.RIGHT_FOOT_INDEX].y;
+      const minY = Math.min(ly, ry);
+      const dy = -minY;   // bring lowest foot to 0
+      for (let j = 0; j < 33; j++) f.points[j].y += dy;
+    }
+
+    // 4. Anatomical joint angle limits — applied as bone-length preservation
+    //    + cone limits on knees/elbows (no hyperextension)
+    if (clamp) applyJointLimits(f);
+  }
+
+  // meta
+  const avgConf = totalCount ? totalConf / totalCount : 0;
+  metaFrames.textContent = frames.length;
+  metaDur.textContent = (frames.length / +fpsSlider.value).toFixed(2) + "s";
+  metaConf.textContent = avgConf.toFixed(3);
+}
+
+function applyJointLimits(f) {
+  // Prevent elbow/knee hyperextension: clamp the angle at the joint to [10°, 170°]
+  const limbs = [
+    [LM.LEFT_SHOULDER, LM.LEFT_ELBOW, LM.LEFT_WRIST],
+    [LM.RIGHT_SHOULDER, LM.RIGHT_ELBOW, LM.RIGHT_WRIST],
+    [LM.LEFT_HIP, LM.LEFT_KNEE, LM.LEFT_ANKLE],
+    [LM.RIGHT_HIP, LM.RIGHT_KNEE, LM.RIGHT_ANKLE],
+  ];
+  for (const [a, b, c] of limbs) {
+    const A = f.points[a], B = f.points[b], C = f.points[c];
+    const v1 = sub(A, B), v2 = sub(C, B);
+    const l1 = len(v1), l2 = len(v2);
+    if (l1 < 1e-4 || l2 < 1e-4) continue;
+    const cosA = dot(v1, v2) / (l1 * l2);
+    // Clamp cos to [cos(170), cos(10)]
+    const minCos = Math.cos(170 * Math.PI / 180);   // ~ -0.985
+    const maxCos = Math.cos(10  * Math.PI / 180);   // ~  0.985
+    if (cosA > maxCos) {
+      // straighten too much — pull C slightly to bend
+      const perp = perpInPlane(v1, v2);
+      C.x = B.x + v2[0] * (1 - 0.05) + perp[0] * 0.05 * l2;
+      C.y = B.y + v2[1] * (1 - 0.05) + perp[1] * 0.05 * l2;
+      C.z = B.z + v2[2] * (1 - 0.05) + perp[2] * 0.05 * l2;
+    } else if (cosA < minCos) {
+      // hyperflexion (folded backward)
+      C.x = B.x - v1[0] / l1 * l2 * 0.99;
+      C.y = B.y - v1[1] / l1 * l2 * 0.99;
+      C.z = B.z - v1[2] / l1 * l2 * 0.99;
+    }
+  }
+}
+
+function sub(a,b){ return [a.x-b.x, a.y-b.y, a.z-b.z]; }
+function dot(a,b){ return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+function len(a){ return Math.hypot(a[0],a[1],a[2]); }
+function perpInPlane(v1, v2) {
+  // rough perpendicular via cross with up
+  const up = [0,1,0];
+  const c = [
+    v1[1]*up[2]-v1[2]*up[1],
+    v1[2]*up[0]-v1[0]*up[2],
+    v1[0]*up[1]-v1[1]*up[0],
+  ];
+  const l = Math.hypot(c[0],c[1],c[2]) || 1;
+  return [c[0]/l, c[1]/l, c[2]/l];
+}
+
+// ---------------- preview overlay (2D on video) ----------------
+function drawOverlay(lms) {
+  overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+  if (!lms) return;
+  const W = overlay.width, H = overlay.height;
+  overlayCtx.strokeStyle = "rgba(255, 91, 31, 0.85)";
+  overlayCtx.lineWidth = 2;
+  for (const [a, b] of LM.CONNECTIONS) {
+    overlayCtx.beginPath();
+    overlayCtx.moveTo(lms[a].x * W, lms[a].y * H);
+    overlayCtx.lineTo(lms[b].x * W, lms[b].y * H);
+    overlayCtx.stroke();
+  }
+  overlayCtx.fillStyle = "#f7c948";
+  for (const p of lms) {
+    overlayCtx.beginPath();
+    overlayCtx.arc(p.x * W, p.y * H, 3, 0, Math.PI * 2);
+    overlayCtx.fill();
+  }
+}
+
+// ---------------- 3D preview ----------------
+function initSkeletonPreview() {
+  if (!skel) skel = new Skeleton3D(skeletonCanvas);
+  skel.setFrames(frames);
+  frameScrub.disabled = false;
+  previewPlay.disabled = false;
+  frameScrub.max = frames.length - 1;
+  frameScrub.value = 0;
+  skel.showFrame(0);
+  frameCounter.textContent = `1 / ${frames.length}`;
+}
+frameScrub.addEventListener("input", (e) => {
+  if (!skel) return;
+  const i = +e.target.value;
+  skel.showFrame(i);
+  frameCounter.textContent = `${i + 1} / ${frames.length}`;
+});
+let previewing = false, previewRAF = null;
+previewPlay.addEventListener("click", () => {
+  if (!skel) return;
+  previewing = !previewing;
+  previewPlay.textContent = previewing ? "❚❚ pause" : "▶ preview";
+  if (previewing) {
+    let last = performance.now();
+    let i = +frameScrub.value;
+    const fps = +fpsSlider.value;
+    const step = (now) => {
+      if (!previewing) return;
+      const elapsed = now - last;
+      if (elapsed >= 1000 / fps) {
+        i = (i + 1) % frames.length;
+        skel.showFrame(i);
+        frameScrub.value = i;
+        frameCounter.textContent = `${i + 1} / ${frames.length}`;
+        last = now;
+      }
+      previewRAF = requestAnimationFrame(step);
+    };
+    previewRAF = requestAnimationFrame(step);
+  } else {
+    cancelAnimationFrame(previewRAF);
+  }
+});
+
+// ---------------- export ----------------
+function enableExport() {
+  exportBVHBtn.disabled = false;
+  exportJSONBtn.disabled = false;
+}
+exportBVHBtn.addEventListener("click", () => {
+  const fps = +fpsSlider.value;
+  const bvh = exportBVH(frames, fps);
+  download(bvh, "mocap.bvh", "text/plain");
+});
+exportJSONBtn.addEventListener("click", () => {
+  const fps = +fpsSlider.value;
+  const json = JSON.stringify({
+    fps, frameCount: frames.length,
+    landmarkNames: LM.NAMES,
+    frames: frames.map(f => ({
+      points: f.points.map(p => [+p.x.toFixed(5), +p.y.toFixed(5), +p.z.toFixed(5), +p.score.toFixed(3)])
+    })),
+  });
+  download(json, "mocap.json", "application/json");
+});
+function download(text, name, mime) {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ---------------- boot ----------------
+initModel();

@@ -256,6 +256,19 @@ async function startCapture() {
   cancelBtn.hidden = false;
   progress.hidden = false;
 
+  // iOS Safari/Brave will not decode video frames during programmatic seeks
+  // unless the video has been played at least once. Play+pause to prime it.
+  try {
+    video.muted = true;
+    video.playsInline = true;
+    await video.play();
+    video.pause();
+    video.currentTime = 0;
+    await new Promise(r => setTimeout(r, 100));
+  } catch (e) {
+    console.warn("video prime failed:", e);
+  }
+
   const fps = +fpsSlider.value;
   const dt = 1.0 / fps;
   const dur = video.duration;
@@ -274,25 +287,51 @@ async function startCapture() {
 
   setStatus("busy", "capturing");
 
+  let stuckFrames = 0;
+  let lastVideoTime = -1;
+
   for (let i = 0; i < total; i++) {
     if (cancelFlag) break;
 
     const t = i * dt;
     await seekVideo(t);
 
-    const result = landmarker.detectForVideo(video, performance.now());
+    // detect stuck seek: video time isn't advancing
+    if (Math.abs(video.currentTime - lastVideoTime) < 1e-4 && i > 0) {
+      stuckFrames++;
+      if (stuckFrames >= 3) {
+        diag(`✗ video seek stuck at t=${video.currentTime.toFixed(3)}s (frame ${i})`);
+        setStatus("err", "video seek failed · tap status for log");
+        break;
+      }
+    } else {
+      stuckFrames = 0;
+    }
+    lastVideoTime = video.currentTime;
+
+    let result;
+    try {
+      result = landmarker.detectForVideo(video, performance.now() + i);
+    } catch (e) {
+      diag(`✗ detect frame ${i}: ${(e.message||e).slice(0,80)}`);
+      setStatus("err", "detect failed · tap status for log");
+      break;
+    }
+
     let lms = null;
-    if (result.landmarks && result.landmarks.length > 0) {
-      lms = result.landmarks[0];   // 0..1 normalized 2D + pseudo-z
+    if (result && result.landmarks && result.landmarks.length > 0) {
+      lms = result.landmarks[0];
     }
     rawFrames.push(lms);
 
-    // Build a 33-joint world frame (centered, scaled, smoothed)
     const frame = processFrame(lms, filters, i, dt);
     frames.push(frame);
 
     progressFill.style.width = `${(i / total) * 100}%`;
     progressText.textContent = `processing frame ${i + 1} / ${total}`;
+
+    // yield to the browser every few frames so the UI updates
+    if (i % 5 === 0) await new Promise(r => setTimeout(r, 0));
   }
 
   // Post-process: fill rest blend, joint limits, ground/root lock
@@ -314,9 +353,18 @@ async function startCapture() {
 
 function seekVideo(t) {
   return new Promise((resolve) => {
-    const onSeek = () => { video.removeEventListener("seeked", onSeek); resolve(); };
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      video.removeEventListener("seeked", onSeek);
+      resolve();
+    };
+    const onSeek = () => finish();
     video.addEventListener("seeked", onSeek);
     video.currentTime = Math.min(t, video.duration - 0.001);
+    // iOS Safari sometimes never fires `seeked` reliably — fall back after 500ms
+    setTimeout(finish, 500);
   });
 }
 

@@ -256,7 +256,11 @@ bind(blendSlider, blendVal);
 bind(confSlider, confVal);
 bind(vertSlider, vertVal);
 const heightSlider = $("charHeight"), heightValEl = $("charHeightVal");
-bind(heightSlider, heightValEl, (v) => parseFloat(v).toFixed(2) + " m");
+if (heightSlider && heightValEl) bind(heightSlider, heightValEl, (v) => parseFloat(v).toFixed(2) + " m");
+
+// Helpers that tolerate missing UI elements
+const getNum = (el, fallback) => (el && el.value !== undefined) ? +el.value : fallback;
+const getChecked = (el, fallback) => (el && el.checked !== undefined) ? el.checked : fallback;
 
 // Segmented controls (FPS, aspect)
 function bindSeg(id, onChange) {
@@ -512,13 +516,13 @@ function postProcess(frames) {
   const lockG = lockGround.checked;
   const lockR = lockRoot.checked;
   const clamp = clampJoints.checked;
-  const vertAmt = +vertSlider.value;
+  const vertAmt = getNum(vertSlider, 0.7);
 
   // Foot leveling: detect planted feet (low velocity + near ground) and
   // force heel/ankle/toe to share the same Y. This kills the monocular
   // "floating heel" artifact where the network pushes heel-Y up because
   // it conflates depth with vertical position.
-  if (levelFeet.checked && frames.length >= 3) {
+  if (getChecked(levelFeet, true) && frames.length >= 3) {
     levelPlantedFeet(frames);
   }
 
@@ -590,7 +594,7 @@ function postProcess(frames) {
   // Final pass: scale all coordinates to real-world meters based on
   // user-supplied character height. Uses median detected head-to-foot
   // distance to be robust against outlier frames.
-  const targetHeight = +heightSlider.value;
+  const targetHeight = getNum(heightSlider, 1.75);
   const detectedHeights = [];
   for (const f of frames) {
     if (f.rest) continue;
@@ -622,7 +626,7 @@ function postProcess(frames) {
   // smoothed positions as targets, then solve joint rotations on a
   // rigid skeleton. End-effector motion becomes mathematically arc-shaped
   // because the bones can't stretch.
-  calibration = calibrateSkeleton(frames, +heightSlider.value);
+  calibration = calibrateSkeleton(frames, getNum(heightSlider, 1.75));
   diag(`✓ skeleton calibrated · scale ${calibration.scale.toFixed(3)}`);
 
   const solvedRaw = frames.map(f => solveFrame(f, calibration));

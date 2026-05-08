@@ -143,10 +143,13 @@ html, body {
   background: var(--bg-2);
 }
 .dropzone input[type="file"] {
-  position: absolute;
-  width: 1px; height: 1px;
-  opacity: 0;
-  pointer-events: none;
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 .dropzone:hover, .dropzone.over {
   border-color: var(--accent);

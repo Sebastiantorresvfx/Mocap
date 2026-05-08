@@ -49,43 +49,67 @@ function setStatus(s, msg) {
 }
 
 // ---------------- model init ----------------
+// Track last error so user can tap status to see it
+let lastModelError = "";
+
 async function initModel() {
   setStatus("busy", "loading model");
+  lastModelError = "";
+
+  const modelUrls = [
+    // Lite model first — smaller (~3MB), more likely to succeed on mobile
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+    // Full model fallback
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+  ];
+
   try {
+    setStatus("busy", "loading wasm");
     const fileset = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/[email protected]/wasm"
     );
-    // Try GPU delegate first; iOS Safari often needs CPU fallback.
+
     let lastErr = null;
-    for (const delegate of ["GPU", "CPU"]) {
-      try {
-        landmarker = await PoseLandmarker.createFromOptions(fileset, {
-          baseOptions: {
-            modelAssetPath:
-              "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
-            delegate,
-          },
-          runningMode: "VIDEO",
-          numPoses: 1,
-          minPoseDetectionConfidence: 0.5,
-          minPosePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
-          outputSegmentationMasks: false,
-        });
-        setStatus("ready", `model ready (${delegate.toLowerCase()}) · load a video`);
-        if (videoLoaded) captureBtn.disabled = false;
-        return;
-      } catch (e) {
-        lastErr = e;
-        console.warn(`MediaPipe ${delegate} init failed:`, e);
+    for (const modelAssetPath of modelUrls) {
+      const modelLabel = modelAssetPath.includes("_lite") ? "lite" : "full";
+      for (const delegate of ["GPU", "CPU"]) {
+        try {
+          setStatus("busy", `loading ${modelLabel} (${delegate.toLowerCase()})`);
+          landmarker = await PoseLandmarker.createFromOptions(fileset, {
+            baseOptions: { modelAssetPath, delegate },
+            runningMode: "VIDEO",
+            numPoses: 1,
+            minPoseDetectionConfidence: 0.5,
+            minPosePresenceConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+            outputSegmentationMasks: false,
+          });
+          setStatus("ready", `model ready · ${modelLabel}/${delegate.toLowerCase()}`);
+          if (videoLoaded) captureBtn.disabled = false;
+          return;
+        } catch (e) {
+          lastErr = e;
+          console.warn(`init failed [${modelLabel}/${delegate}]:`, e);
+        }
       }
     }
-    throw lastErr || new Error("unknown init error");
+    throw lastErr || new Error("all init paths failed");
   } catch (e) {
-    console.error(e);
-    setStatus("err", "model failed: " + (e.message || e).slice(0, 80));
+    console.error("model init failed:", e);
+    lastModelError = (e && e.message) ? e.message : String(e);
+    setStatus("err", "tap to see error · retry");
   }
 }
+
+// Tap status to retry / view error
+statusEl.addEventListener("click", () => {
+  if (statusEl.classList.contains("err")) {
+    alert("Model load error:\n\n" + (lastModelError || "unknown") +
+      "\n\nTapping OK will retry. If this keeps failing, check your network — the app needs to reach cdn.jsdelivr.net and storage.googleapis.com.");
+    initModel();
+  }
+});
+statusEl.style.cursor = "pointer";
 
 // ---------------- file loading ----------------
 function loadVideoFile(file) {

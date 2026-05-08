@@ -6,6 +6,9 @@ import { OneEuroFilter } from "./oneEuro.js";
 import { exportBVH } from "./bvh.js";
 import { Skeleton3D }  from "./skeleton3d.js";
 import { LM, REST_POSE, JOINT_LIMITS } from "./skeletonDef.js";
+import { calibrateSkeleton, solveFrame, worldToLocal, JOINT_ORDER, PARENT } from "./solver.js";
+import { smoothQuatSeries } from "./quatSmooth.js";
+import { q } from "./quat.js";
 
 // MediaPipe is loaded dynamically below so we can catch import failures
 let PoseLandmarker = null;
@@ -22,7 +25,7 @@ const fpsSlider = $("fps"), smoothSlider = $("smooth"),
 const smoothVal = $("smoothVal"),
       blendVal = $("blendVal"), confVal = $("confVal");
 const lockGround = $("lockGround"), lockRoot = $("lockRoot"),
-      clampJoints = $("clampJoints");
+      clampJoints = $("clampJoints"), levelFeet = $("levelFeet");
 const vertSlider = $("vert"), vertVal = $("vertVal");
 const captureBtn = $("captureBtn"), cancelBtn = $("cancelBtn");
 const progress = $("progress"), progressFill = $("progressFill"),
@@ -39,8 +42,10 @@ let landmarker = null;
 let videoLoaded = false;
 let capturing = false;
 let cancelFlag = false;
-let frames = [];      // captured & post-processed frames
+let frames = [];      // captured & post-processed frames (raw positions)
 let rawFrames = [];   // raw landmarker output (debug)
+let solvedFrames = []; // FK-solved: { hipPos, local: {jointName: quat} }
+let calibration = null;
 let skel = null;
 
 // ---------------- status ----------------
@@ -495,6 +500,14 @@ function postProcess(frames) {
   const clamp = clampJoints.checked;
   const vertAmt = +vertSlider.value;
 
+  // Foot leveling: detect planted feet (low velocity + near ground) and
+  // force heel/ankle/toe to share the same Y. This kills the monocular
+  // "floating heel" artifact where the network pushes heel-Y up because
+  // it conflates depth with vertical position.
+  if (levelFeet.checked && frames.length >= 3) {
+    levelPlantedFeet(frames);
+  }
+
   // Compute foot Y baseline across all frames (lowest reliable Y)
   let groundY = Infinity;
   for (const f of frames) {
@@ -590,12 +603,214 @@ function postProcess(frames) {
     }
   }
 
+  // ---------- Constrained FK solve + rotation smoothing ----------
+  // This is what makes hands and feet trace true arcs: we treat the
+  // smoothed positions as targets, then solve joint rotations on a
+  // rigid skeleton. End-effector motion becomes mathematically arc-shaped
+  // because the bones can't stretch.
+  calibration = calibrateSkeleton(frames, +heightSlider.value);
+  diag(`✓ skeleton calibrated · scale ${calibration.scale.toFixed(3)}`);
+
+  const solvedRaw = frames.map(f => solveFrame(f, calibration));
+
+  // Smooth each joint's WORLD quaternion across time, then convert to
+  // parent-relative for output. Smoothing in world space prevents
+  // child rotations from inheriting parent jitter.
+  const fps = +fpsSlider.value;
+  const smoothed = solvedRaw.map(s => ({ hipPos: s.hipPos.slice(), world: {} }));
+  for (const name of JOINT_ORDER) {
+    const series = solvedRaw.map(s => s.world[name] || q.identity());
+    const sm = smoothQuatSeries(series, fps,
+      /*mincutoff*/ 1.0 - 0.95 * (+smoothSlider.value),
+      /*beta*/      0.5);
+    for (let i = 0; i < smoothed.length; i++) smoothed[i].world[name] = sm[i];
+  }
+  // Smooth hip positions (3 channels) using the existing OneEuroFilter
+  const hipFilters = [
+    new OneEuroFilter(fps, 1.0 - 0.95 * (+smoothSlider.value), 0.5),
+    new OneEuroFilter(fps, 1.0 - 0.95 * (+smoothSlider.value), 0.5),
+    new OneEuroFilter(fps, 1.0 - 0.95 * (+smoothSlider.value), 0.5),
+  ];
+  for (let i = 0; i < smoothed.length; i++) {
+    const t = i / fps;
+    smoothed[i].hipPos[0] = hipFilters[0].filter(smoothed[i].hipPos[0], t);
+    smoothed[i].hipPos[1] = hipFilters[1].filter(smoothed[i].hipPos[1], t);
+    smoothed[i].hipPos[2] = hipFilters[2].filter(smoothed[i].hipPos[2], t);
+  }
+  // Convert world → local for each frame
+  solvedFrames = smoothed.map(s => ({
+    hipPos: s.hipPos,
+    world:  s.world,
+    local:  worldToLocal(s.world),
+  }));
+  diag(`✓ solved ${solvedFrames.length} frames with rigid bones`);
+
+  // Rebuild MediaPipe-landmark positions from the solved rigid skeleton
+  // via forward kinematics. This way the 3D preview and overlay show
+  // the cleaned skeleton (rigid bones, true arcs), not the noisy raw
+  // detector output.
+  for (let i = 0; i < frames.length; i++) {
+    rebuildLandmarksFromSolved(frames[i], solvedFrames[i], calibration);
+  }
+
   // meta
   const avgConf = totalCount ? totalConf / totalCount : 0;
   metaFrames.textContent = frames.length;
   metaDur.textContent = (frames.length / +fpsSlider.value).toFixed(2) + "s";
   metaConf.textContent = avgConf.toFixed(3);
 }
+
+function rebuildLandmarksFromSolved(frame, solved, calib) {
+  // Forward kinematics from solved world quaternions + bone lengths.
+  // World axis convention: each joint's local +Y is "down the bone toward
+  // the next joint" (what qLookRotation builds in solver.js).
+  const L = calib.lengths;
+  const W = solved.world;
+  const hip = solved.hipPos;
+
+  // Helper: position of joint = parent_position + parent_world_q * (0, +bone_len, 0)
+  // Wait — our convention puts +Y as the bone direction. So child position =
+  // parent_pos + rotate(parent_q, [0, bone_len, 0]). But for limbs, bone
+  // length goes from parent down to child where the "down" direction is
+  // already encoded in the local frame.
+  //
+  // Simpler: each joint world quat already encodes where its +Y points
+  // (the direction of its outgoing bone). So:
+  //   childPos = parentJointPos + rotate(parent_world_q, [0, L_to_child, 0])
+  // But the child position is what the parent's bone produces — we use
+  // the *parent's* world q to project the parent's bone length.
+
+  // Build the chain manually.
+  // Hip world position = hip
+  // Spine joint world position = hip + W.Hips * (0, torso*0.4, 0)
+  // Actually our offsets in BVH put Spine at (0, torso*0.4, 0) from hip,
+  // Chest at (0, torso*0.6, 0) from Spine. Let's mirror that.
+  const offsetsM = {
+    Spine:         [0, L.torso * 0.5, 0],
+    Chest:         [0, L.torso * 0.5, 0],
+    Neck:          [0, L.neck, 0],
+    Head:          [0, L.head, 0],
+
+    LeftShoulder:  [-L.clav_L, 0, 0],
+    LeftArm:       [0, 0, 0],
+    LeftForeArm:   [0, L.upperArm_L, 0],
+    LeftHand:      [0, L.foreArm_L, 0],
+
+    RightShoulder: [L.clav_R, 0, 0],
+    RightArm:      [0, 0, 0],
+    RightForeArm:  [0, L.upperArm_R, 0],
+    RightHand:     [0, L.foreArm_R, 0],
+
+    LeftUpLeg:     [-L.pelvis_L, 0, 0],
+    LeftLeg:       [0, L.thigh_L, 0],
+    LeftFoot:      [0, L.shin_L, 0],
+    LeftToe:       [0, L.foot_L, 0],
+
+    RightUpLeg:    [L.pelvis_R, 0, 0],
+    RightLeg:      [0, L.thigh_R, 0],
+    RightFoot:     [0, L.shin_R, 0],
+    RightToe:      [0, L.foot_R, 0],
+  };
+
+  // Compute world positions of each named joint by walking the hierarchy
+  const pos = { Hips: hip.slice() };
+  const order = JOINT_ORDER;
+  for (const name of order) {
+    if (name === "Hips") continue;
+    const parent = PARENT[name];
+    const offsetLocal = offsetsM[name] || [0, 0, 0];
+    const parentQ = W[parent] || q.identity();
+    const offWorld = q.rotate(parentQ, offsetLocal);
+    pos[name] = [
+      pos[parent][0] + offWorld[0],
+      pos[parent][1] + offWorld[1],
+      pos[parent][2] + offWorld[2],
+    ];
+  }
+
+  // Map joint world positions onto the 33 MediaPipe landmark slots
+  // so the existing 3D preview / overlay code keeps working.
+  // (We only fill the ones that matter; rest stay where they were.)
+  const setP = (lmIdx, p) => {
+    frame.points[lmIdx].x = p[0];
+    frame.points[lmIdx].y = p[1];
+    frame.points[lmIdx].z = p[2];
+  };
+  setP(LM.LEFT_HIP,        pos.LeftUpLeg);
+  setP(LM.RIGHT_HIP,       pos.RightUpLeg);
+  setP(LM.LEFT_SHOULDER,   pos.LeftArm);
+  setP(LM.RIGHT_SHOULDER,  pos.RightArm);
+  setP(LM.LEFT_ELBOW,      pos.LeftForeArm);
+  setP(LM.RIGHT_ELBOW,     pos.RightForeArm);
+  setP(LM.LEFT_WRIST,      pos.LeftHand);
+  setP(LM.RIGHT_WRIST,     pos.RightHand);
+  setP(LM.LEFT_KNEE,       pos.LeftLeg);
+  setP(LM.RIGHT_KNEE,      pos.RightLeg);
+  setP(LM.LEFT_ANKLE,      pos.LeftFoot);
+  setP(LM.RIGHT_ANKLE,     pos.RightFoot);
+  setP(LM.LEFT_FOOT_INDEX, pos.LeftToe);
+  setP(LM.RIGHT_FOOT_INDEX,pos.RightToe);
+  setP(LM.NOSE,            pos.Head);
+}
+
+function levelPlantedFeet(frames) {
+  const SIDES = [
+    { ankle: LM.LEFT_ANKLE,  heel: LM.LEFT_HEEL,  toe: LM.LEFT_FOOT_INDEX  },
+    { ankle: LM.RIGHT_ANKLE, heel: LM.RIGHT_HEEL, toe: LM.RIGHT_FOOT_INDEX },
+  ];
+
+  for (const side of SIDES) {
+    // 1. Collect ankle Y trajectory + estimate ground level (5th percentile)
+    const ankleYs = frames.map(f => f.points[side.ankle].y);
+    const sorted = [...ankleYs].sort((a, b) => a - b);
+    const groundY = sorted[Math.floor(sorted.length * 0.05)];
+
+    // 2. Compute per-frame ankle vertical velocity (smoothed)
+    const vel = new Array(frames.length);
+    for (let i = 0; i < frames.length; i++) {
+      const a = ankleYs[Math.max(0, i - 1)];
+      const b = ankleYs[Math.min(frames.length - 1, i + 1)];
+      vel[i] = Math.abs(b - a);
+    }
+
+    // Threshold: ankle is within 12% of the foot's vertical range above
+    // ground AND velocity is low → planted.
+    const range = sorted[sorted.length - 1] - groundY;
+    const heightThreshold = groundY + range * 0.15;
+    const velThreshold = Math.max(0.01, range * 0.05);
+
+    // 3. Build planted mask + smooth it (require 2+ consecutive frames)
+    const planted = new Array(frames.length).fill(false);
+    for (let i = 0; i < frames.length; i++) {
+      if (ankleYs[i] <= heightThreshold && vel[i] <= velThreshold) {
+        planted[i] = true;
+      }
+    }
+    // erode/dilate: drop singletons, keep runs ≥ 2 frames
+    const cleaned = [...planted];
+    for (let i = 0; i < frames.length; i++) {
+      if (planted[i] && !planted[i-1] && !planted[i+1]) cleaned[i] = false;
+    }
+
+    // 4. For each planted frame, level heel/ankle/toe to the same Y.
+    //    Use the lowest of the three (closest to floor), keep X/Z intact.
+    for (let i = 0; i < frames.length; i++) {
+      if (!cleaned[i]) continue;
+      const f = frames[i];
+      const h = f.points[side.heel];
+      const a = f.points[side.ankle];
+      const t = f.points[side.toe];
+      const floorY = Math.min(h.y, t.y);
+      // Heel and toe go to the same Y (the floor for that frame).
+      // Ankle stays a small offset above (~ankle bone length).
+      const ankleOffset = Math.max(0.04, (a.y - floorY) * 0.5);
+      h.y = floorY;
+      t.y = floorY;
+      a.y = floorY + ankleOffset;
+    }
+  }
+}
+
 
 function applyVerticality(f, amount) {
   // Step A: damp each joint's Z toward its rest-pose Z.
@@ -843,7 +1058,8 @@ function enableExport() {
 }
 exportBVHBtn.addEventListener("click", () => {
   const fps = +fpsSlider.value;
-  const bvh = exportBVH(frames, fps);
+  if (!solvedFrames.length || !calibration) return;
+  const bvh = exportBVH(solvedFrames, fps, calibration);
   download(bvh, "mocap.bvh", "text/plain");
 });
 exportJSONBtn.addEventListener("click", () => {

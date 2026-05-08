@@ -14,14 +14,15 @@ export class Skeleton3D {
     this.frameIdx = 0;
     this.mode = "overlay";
 
-    // perspective camera
-    this.hFov = 67;            // horizontal field of view (degrees)
-    this.camDist = 3.0;        // metres from origin
+    // 3D view lens — selectable. Lens focal length → horizontal FOV
+    // (full-frame equivalent): 35mm≈54°, 50mm≈40°, 85mm≈24°.
+    // Lower FOV = less perspective distortion, more telephoto-flat look.
+    this.hFov = 54;            // default 35mm
+    this.camDist = 3.0;
     this.yaw = 0;
     this.pitch = -0.05;
     this.panY = 0;
 
-    // video element used in overlay mode (set externally)
     this.videoEl = null;
 
     this._bindInput();
@@ -35,7 +36,21 @@ export class Skeleton3D {
   }
 
   setVideoElement(el) { this.videoEl = el; }
-  setHFOV(deg) { this.hFov = deg; }
+  // 3D view lens selector — adjusts FOV + compensates camera distance
+  // so the on-screen character size stays roughly constant across lenses.
+  setLens(focalMm) {
+    // Approximate horizontal FOV for full-frame equivalents
+    const fovTable = { 24: 73, 28: 66, 35: 54, 50: 40, 85: 24, 135: 15 };
+    const newFov = fovTable[focalMm] ?? 40;
+    const oldFov = this.hFov;
+    // Keep apparent size: camDist scales as tan(oldFov/2) / tan(newFov/2)
+    const ratio = Math.tan((oldFov * Math.PI / 180) / 2) /
+                  Math.tan((newFov * Math.PI / 180) / 2);
+    this.camDist *= ratio;
+    this.hFov = newFov;
+    if (this.frames.length) this.showFrame(this.frameIdx);
+  }
+  setHFOV(_deg) { /* device picker is for overlay context only */ }
 
   _resize() {
     const dpr = window.devicePixelRatio || 1;
@@ -57,11 +72,10 @@ export class Skeleton3D {
     window.addEventListener("mouseup", () => dragging = false);
     window.addEventListener("mousemove", (e) => {
       if (!dragging) return;
-      const dx = e.clientX - lx, dy = e.clientY - ly;
+      const dx = e.clientX - lx;
       lx = e.clientX; ly = e.clientY;
-      this.yaw   += dx * 0.01;
-      this.pitch += dy * 0.01;
-      this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch));
+      this.yaw += dx * 0.01;
+      // pitch is locked
       this.showFrame(this.frameIdx);
     });
     this.canvas.addEventListener("wheel", (e) => {
@@ -87,10 +101,10 @@ export class Skeleton3D {
       if (this.mode !== "3d") return;
       e.preventDefault();
       if (e.touches.length === 1) {
-        const dx = e.touches[0].clientX - tdx, dy = e.touches[0].clientY - tdy;
+        const dx = e.touches[0].clientX - tdx;
         tdx = e.touches[0].clientX; tdy = e.touches[0].clientY;
-        this.yaw += dx * 0.01; this.pitch += dy * 0.01;
-        this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch));
+        this.yaw += dx * 0.01;
+        // pitch is locked
       } else if (e.touches.length === 2) {
         const d = Math.hypot(
           e.touches[0].clientX - e.touches[1].clientX,

@@ -739,9 +739,18 @@ document.querySelectorAll(".view-btn").forEach(btn => {
       if (skel) skel.setMode("overlay");
     } else {
       wrap.classList.remove("mode-overlay");
-      if (hint) hint.textContent = "drag to orbit · scroll to zoom";
+      if (hint) hint.textContent = "drag sideways to orbit · pinch to dolly";
       if (skel) skel.setMode("3d");
     }
+  });
+});
+
+// Lens toggle (only relevant in 3D mode)
+document.querySelectorAll("#lensToggle button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#lensToggle button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    if (skel) skel.setLens(+btn.dataset.lens);
   });
 });
 frameScrub.addEventListener("input", (e) => {

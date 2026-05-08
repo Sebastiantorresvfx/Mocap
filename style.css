@@ -392,28 +392,26 @@ input[type="range"]::-moz-range-thumb {
 /* ---------- 3D preview ---------- */
 .preview3d {
   position: relative;
-  background: linear-gradient(180deg, #0a0908 0%, #1a1612 100%);
+  background: #000;
   border-radius: 4px;
-  border: 1px solid var(--line);
+  border: 2px solid var(--accent);
   overflow: hidden;
   width: 100%;
-  aspect-ratio: 9/16;
-  min-height: 320px;
-  max-height: 70vh;
+  height: 500px;
   margin: 0 auto;
+  display: block;
 }
 .preview3d.aspect-9-16 {
-  aspect-ratio: 9/16;
-  max-width: 360px;
+  max-width: 320px;
+  height: 568px;
 }
 .preview3d.aspect-16-9 {
-  aspect-ratio: 16/9;
   max-width: 100%;
-  min-height: 240px;
+  height: 240px;
 }
 .preview3d.aspect-1-1 {
-  aspect-ratio: 1/1;
-  max-width: 480px;
+  max-width: 400px;
+  height: 400px;
 }
 #previewVideo {
   position: absolute;
@@ -448,6 +446,35 @@ input[type="range"]::-moz-range-thumb {
   border-radius: 3px;
   padding: 3px;
   z-index: 10;
+}
+.lens-toggle {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: none;
+  gap: 4px;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px;
+  z-index: 10;
+}
+.preview3d:not(.mode-overlay) .lens-toggle { display: flex; }
+.lens-toggle button {
+  background: transparent;
+  border: none;
+  color: var(--ink-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 5px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.lens-toggle button.active {
+  background: var(--accent-2);
+  color: #000;
 }
 .view-btn {
   background: transparent;

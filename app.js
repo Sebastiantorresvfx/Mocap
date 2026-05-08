@@ -60,30 +60,32 @@ function diag(msg) {
 }
 
 async function loadMediaPipeLib() {
-  // Try multiple CDN sources; iOS Safari sometimes refuses jsdelivr module imports
+  // Local first (works in Brave/strict shields). CDN fallback only if local missing.
   const sources = [
+    "./vendor/mediapipe/vision_bundle.mjs",
     "https://cdn.jsdelivr.net/npm/@mediapipe/[email protected]/vision_bundle.mjs",
     "https://unpkg.com/@mediapipe/[email protected]/vision_bundle.mjs",
-    "https://esm.sh/@mediapipe/[email protected]",
   ];
   let lastErr = null;
   for (const src of sources) {
     try {
-      diag(`importing ${src.split("/")[2]}…`);
+      const label = src.startsWith("./") ? "local" : src.split("/")[2];
+      diag(`importing ${label}…`);
       const mod = await import(/* @vite-ignore */ src);
       if (mod.PoseLandmarker && mod.FilesetResolver) {
         PoseLandmarker = mod.PoseLandmarker;
         FilesetResolver = mod.FilesetResolver;
-        diag(`✓ library loaded from ${src.split("/")[2]}`);
+        diag(`✓ library loaded from ${label}`);
         return;
       }
-      diag(`module loaded but missing exports from ${src.split("/")[2]}`);
+      diag(`module loaded but missing exports from ${label}`);
     } catch (e) {
       lastErr = e;
-      diag(`✗ failed ${src.split("/")[2]}: ${(e.message||e).slice(0,60)}`);
+      const label = src.startsWith("./") ? "local" : src.split("/")[2];
+      diag(`✗ failed ${label}: ${(e.message||e).slice(0,60)}`);
     }
   }
-  throw lastErr || new Error("no CDN source worked");
+  throw lastErr || new Error("no source worked");
 }
 
 async function initModel() {
@@ -99,26 +101,57 @@ async function initModel() {
     return;
   }
 
+  // Local model path first (works under strict CSP/Brave). Google CDN as fallback.
   const modelUrls = [
+    "./models/pose_landmarker_lite.task",
+    "./models/pose_landmarker_full.task",
     "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
     "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
   ];
 
+  // WASM resolver: local first, then CDN
+  const wasmSources = [
+    "./vendor/mediapipe/wasm",
+    "https://cdn.jsdelivr.net/npm/@mediapipe/[email protected]/wasm",
+  ];
+
   try {
-    setStatus("busy", "loading wasm");
-    diag("resolving wasm fileset…");
-    const fileset = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/[email protected]/wasm"
-    );
-    diag("✓ wasm fileset ready");
+    let fileset = null;
+    let wasmErr = null;
+    for (const wasmPath of wasmSources) {
+      try {
+        const label = wasmPath.startsWith("./") ? "local-wasm" : "cdn-wasm";
+        setStatus("busy", `loading ${label}`);
+        diag(`resolving ${label}…`);
+        fileset = await FilesetResolver.forVisionTasks(wasmPath);
+        diag(`✓ ${label} ready`);
+        break;
+      } catch (e) {
+        wasmErr = e;
+        diag(`✗ wasm at ${wasmPath}: ${(e.message||e).slice(0,60)}`);
+      }
+    }
+    if (!fileset) throw wasmErr || new Error("wasm not loadable");
 
     let lastErr = null;
     for (const modelAssetPath of modelUrls) {
-      const modelLabel = modelAssetPath.includes("_lite") ? "lite" : "full";
+      const isLocal = modelAssetPath.startsWith("./");
+      const modelLabel = (isLocal ? "local-" : "cdn-") +
+        (modelAssetPath.includes("_lite") ? "lite" : "full");
       for (const delegate of ["GPU", "CPU"]) {
         try {
-          setStatus("busy", `loading ${modelLabel}/${delegate.toLowerCase()}`);
+          setStatus("busy", `${modelLabel}/${delegate.toLowerCase()}`);
           diag(`trying ${modelLabel}/${delegate}…`);
+
+          // Quick HEAD probe for local URLs so we skip 404s fast
+          if (isLocal) {
+            const probe = await fetch(modelAssetPath, { method: "HEAD" });
+            if (!probe.ok) {
+              diag(`  (local model not present, skipping)`);
+              continue;
+            }
+          }
+
           landmarker = await PoseLandmarker.createFromOptions(fileset, {
             baseOptions: { modelAssetPath, delegate },
             runningMode: "VIDEO",

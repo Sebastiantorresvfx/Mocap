@@ -250,7 +250,7 @@ bind(smoothSlider, smoothVal);
 bind(blendSlider, blendVal);
 bind(confSlider, confVal);
 bind(vertSlider, vertVal);
-const heightSlider = $("height"), heightValEl = $("heightVal");
+const heightSlider = $("charHeight"), heightValEl = $("charHeightVal");
 bind(heightSlider, heightValEl, (v) => parseFloat(v).toFixed(2) + " m");
 
 // Segmented controls (FPS, aspect)
@@ -727,33 +727,45 @@ function initSkeletonPreview() {
   frameScrub.max = frames.length - 1;
   frameScrub.value = 0;
 
-  // Default to overlay mode so user can validate alignment first
+  // Default to overlay mode
   document.querySelectorAll(".view-btn").forEach(b => b.classList.remove("active"));
   document.querySelector('.view-btn[data-view="overlay"]')?.classList.add("active");
   document.getElementById("preview3d").classList.add("mode-overlay");
   skel.setMode("overlay");
 
-  // Prime the preview video so iOS will actually render frames on seek
+  // Prime the preview video — must be playable for seek to work on iOS
   if (pv) {
     pv.muted = true;
     pv.playsInline = true;
-    pv.play().then(() => pv.pause()).catch(() => {});
-  }
-
-  setTimeout(() => {
-    syncPreviewVideo(0);
+    const startSync = () => {
+      syncPreviewVideo(0);
+      skel.showFrame(0);
+    };
+    if (pv.readyState >= 2) {
+      // already have current frame data
+      pv.play().then(() => pv.pause()).catch(() => {}).finally(startSync);
+    } else {
+      pv.addEventListener("loadeddata", () => {
+        pv.play().then(() => pv.pause()).catch(() => {}).finally(startSync);
+      }, { once: true });
+      pv.load();
+    }
+  } else {
     skel.showFrame(0);
-  }, 100);
+  }
   frameCounter.textContent = `1 / ${frames.length}`;
 }
 
 function syncPreviewVideo(frameIdx) {
   const pv = document.getElementById("previewVideo");
-  if (!pv || !pv.duration) return;
+  if (!pv) return;
   const fps = +fpsSlider.value;
   const t = frameIdx / fps;
-  if (Math.abs(pv.currentTime - t) > 0.05) {
-    try { pv.currentTime = Math.min(t, pv.duration - 0.001); } catch {}
+  if (!pv.duration) return;
+  try {
+    pv.currentTime = Math.min(Math.max(t, 0), pv.duration - 0.001);
+  } catch (e) {
+    console.warn("preview seek failed:", e);
   }
 }
 

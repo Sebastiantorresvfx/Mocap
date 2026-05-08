@@ -119,7 +119,6 @@ export class Skeleton3D {
 
   setFrames(frames) {
     this.frames = frames;
-    this.yaw = 0;
     this.pitch = 0;            // truly horizontal — no down-tilt
     if (frames.length) {
       let minY = Infinity, maxY = -Infinity, maxR = 0;
@@ -132,14 +131,38 @@ export class Skeleton3D {
         }
       }
       const height = Math.max(0.5, maxY - minY);
-      // Aim camera at mid-torso (~60% up the body) so character is centered
       this.targetY = minY + height * 0.6;
-      // Place camera so character vertically fills ~75% of frame at given FOV
       const aspect = this.W / this.H;
       const hFovRad = this.hFov * Math.PI / 180;
       const vFovRad = 2 * Math.atan(Math.tan(hFovRad / 2) / aspect);
       this.camDist = (height * 0.75) / (2 * Math.tan(vFovRad / 2));
       this.camDist = Math.max(this.camDist, maxR * 1.5 + 1.0);
+
+      // Auto-orient: detect which way the character faces and set default
+      // yaw so the camera looks at their FRONT.
+      // Facing direction = cross product of (right shoulder - left shoulder)
+      // with up vector, projected onto XZ plane.
+      const f0 = frames[Math.floor(frames.length / 2)] || frames[0];
+      const ls = f0.points[11], rs = f0.points[12]; // 11=LEFT_SHOULDER, 12=RIGHT_SHOULDER
+      if (ls && rs) {
+        // Shoulder vector L→R in XZ plane
+        const sx = rs.x - ls.x, sz = rs.z - ls.z;
+        // Facing = perpendicular to shoulder vector, pointing forward.
+        // In our coord system, when person faces camera: shoulders span X axis,
+        // facing direction is -Z (toward camera placed at +Z).
+        // Forward vector = (sz, 0, -sx) normalized
+        const fx = sz, fz = -sx;
+        const fl = Math.hypot(fx, fz) || 1;
+        const fxn = fx / fl, fzn = fz / fl;
+        // Camera sits at (0, 0, camDist) looking at origin (toward -Z).
+        // We want character's facing to point at +Z (so they look at camera).
+        // Required yaw rotates facing vector to (0, 0, 1).
+        // atan2(fxn, fzn) gives the angle facing makes with +Z.
+        // We rotate by -that to align.
+        this.yaw = -Math.atan2(fxn, fzn);
+      } else {
+        this.yaw = 0;
+      }
     }
   }
 

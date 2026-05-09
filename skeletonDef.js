@@ -44,96 +44,68 @@ export const LM = {
     [24,26],[26,28],[28,30],[28,32],[30,32],
   ],
 
-  // Canonical OpenPose BODY_25 colors, mapped onto MediaPipe's 33 landmarks.
-  // The palette is HSV-based: hue rotates around the body, with red at the
-  // spine and rainbow gradients down each limb.
-  // Reference: OpenPose getColors() output for BODY_25.
+  // COCO 18-point topology mapped onto MediaPipe's 33 landmarks.
+  // Synthesized joints (not in MediaPipe but in COCO):
+  //   "neck" = midpoint of L+R shoulder
+  //   "midHip" = midpoint of L+R hip
+  // Use string IDs for those synthetic points; numeric IDs for MediaPipe joints.
+  // The renderer treats any non-numeric ID as a synthetic joint to compute on the fly.
   COLORED_CONNECTIONS: [
-    // ---- Spine / torso (reds and oranges) ----
-    [11, 12, "#ff0000"],   // shoulder line — red
-    [11, 23, "#ff5500"],   // L shoulder → L hip
-    [12, 24, "#ff5500"],   // R shoulder → R hip
-    [23, 24, "#ff0000"],   // hip line — red
+    // Torso: Y-shape from neck to each hip — NO spine line, NO hip-to-hip line
+    ["neck", 23, "#88ff00"],   // neck → L hip (left side green)
+    ["neck", 24, "#0088ff"],   // neck → R hip (right side blue)
 
-    // ---- Face / head (magenta/pinks/purples) ----
-    [0, 2,  "#ff00aa"],    // nose → left eye
-    [2, 5,  "#dd00ff"],
-    [5, 8,  "#aa00ff"],    // → left ear
-    [0, 1,  "#ff0099"],    // nose → right eye area
-    [1, 4,  "#ff00cc"],
-    [4, 7,  "#cc00ff"],    // → right ear
-    [9, 10, "#ff0077"],    // mouth
+    // Shoulders: neck → L shoulder, neck → R shoulder
+    ["neck", 11, "#ff5500"],
+    ["neck", 12, "#aa00ff"],
 
-    // ---- LEFT side of CHARACTER (image-right when facing camera) ----
-    // OpenPose convention: orange → yellow → green-yellow as you go down
-    // upper body, then green for legs.
-    // MediaPipe LEFT_* = character's left = image-right when person faces camera.
-    [11, 13, "#ff8800"],   // L shoulder → L elbow (orange)
-    [13, 15, "#ffaa00"],   // L elbow → L wrist (yellow-orange)
-    [15, 17, "#ffcc00"],   // L wrist → L pinky
-    [15, 19, "#ffdd00"],   // L wrist → L index
-    [15, 21, "#ffee00"],   // L wrist → L thumb
-    [17, 19, "#ffd500"],
+    // Left arm (character's left = image right): orange → yellow
+    [11, 13, "#ffaa00"],
+    [13, 15, "#ffdd00"],
 
-    // L leg: yellow-green to green
-    [23, 25, "#aaff00"],   // L hip → L knee
-    [25, 27, "#55ff00"],   // L knee → L ankle
-    [27, 29, "#00ff00"],   // L ankle → L heel
-    [27, 31, "#00ff44"],   // L ankle → L toe
-    [29, 31, "#00ff22"],
+    // Right arm (character's right = image left): magenta → cyan
+    [12, 14, "#cc00ff"],
+    [14, 16, "#00aaff"],
 
-    // ---- RIGHT side of CHARACTER (image-left) ----
-    // Cool side: cyan → blue → purple
-    [12, 14, "#00ffaa"],   // R shoulder → R elbow (teal)
-    [14, 16, "#00ffff"],   // R elbow → R wrist (cyan)
-    [16, 18, "#00ddff"],
-    [16, 20, "#00bbff"],
-    [16, 22, "#0099ff"],
-    [18, 20, "#00ccff"],
+    // Left leg: green
+    [23, 25, "#44ff00"],
+    [25, 27, "#00ff44"],
 
-    // R leg: blue → indigo → purple
-    [24, 26, "#0066ff"],   // R hip → R knee
-    [26, 28, "#0033ff"],   // R knee → R ankle
-    [28, 30, "#3300ff"],   // R ankle → R heel
-    [28, 32, "#5500ff"],   // R ankle → R toe
-    [30, 32, "#4400ff"],
+    // Right leg: blue
+    [24, 26, "#0044ff"],
+    [26, 28, "#0000ff"],
+
+    // Head: neck → nose; nose → eyes; eyes → ears
+    ["neck", 0, "#ff00aa"],
+    [0, 2,  "#ff00cc"],
+    [2, 7,  "#ff00ee"],
+    [0, 5,  "#cc00ff"],
+    [5, 8,  "#aa00ff"],
   ],
 
-  // Per-landmark joint dot colors — match the bone palette
-  JOINT_COLORS: [
-    // 0..10 face
-    "#ff0066",   // 0 nose (red-pink)
-    "#ff00aa",   // 1 R eye inner
-    "#ff0099",   // 2 L eye inner (image-right of nose)
-    "#ff00cc",
-    "#ff00bb",
-    "#dd00ff",
-    "#aa00ff",
-    "#ff0099",   // 7 L ear
-    "#cc00ff",   // 8 R ear
-    "#ff0077",   // 9 mouth left
-    "#ff0088",   // 10 mouth right
-    // 11..16 shoulders/elbows/wrists
-    "#ff8800",   // 11 L shoulder (orange)
-    "#00ffaa",   // 12 R shoulder (teal)
-    "#ffaa00",   // 13 L elbow
-    "#00ffff",   // 14 R elbow
-    "#ffcc00",   // 15 L wrist
-    "#00ddff",   // 16 R wrist
-    // 17..22 hand fingers
-    "#ffdd00", "#00ccff", "#ffe200", "#00bbff", "#ffee00", "#0099ff",
-    // 23..32 hips/knees/ankles/feet
-    "#ff5500",   // 23 L hip
-    "#ff5500",   // 24 R hip
-    "#aaff00",   // 25 L knee
-    "#0066ff",   // 26 R knee
-    "#55ff00",   // 27 L ankle
-    "#0033ff",   // 28 R ankle
-    "#00ff00",   // 29 L heel
-    "#3300ff",   // 30 R heel
-    "#00ff44",   // 31 L toe
-    "#5500ff",   // 32 R toe
+  // 18 COCO joints (no midHip — torso is a Y from neck to each hip directly)
+  COCO_JOINTS: [
+    { id: 0,      color: "#ff0066" },   // nose
+    { id: "neck", color: "#ff0033" },   // neck (synthetic)
+    { id: 11,     color: "#ff5500" },   // L shoulder
+    { id: 13,     color: "#ffaa00" },   // L elbow
+    { id: 15,     color: "#ffdd00" },   // L wrist
+    { id: 12,     color: "#aa00ff" },   // R shoulder
+    { id: 14,     color: "#cc00ff" },   // R elbow
+    { id: 16,     color: "#00aaff" },   // R wrist
+    { id: 23,     color: "#88ff00" },   // L hip
+    { id: 25,     color: "#44ff00" },   // L knee
+    { id: 27,     color: "#00ff44" },   // L ankle
+    { id: 24,     color: "#0088ff" },   // R hip
+    { id: 26,     color: "#0044ff" },   // R knee
+    { id: 28,     color: "#0000ff" },   // R ankle
+    { id: 2,      color: "#ff00cc" },   // L eye
+    { id: 5,      color: "#cc00ff" },   // R eye
+    { id: 7,      color: "#ff00ee" },   // L ear
+    { id: 8,      color: "#aa00ff" },   // R ear
   ],
+
+  JOINT_COLORS: new Array(33).fill("#ffffff"),
 };
 
 // Standing rest pose in our centered Y-up coordinate system.

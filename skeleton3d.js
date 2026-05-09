@@ -71,13 +71,39 @@ export class Skeleton3D {
       if (vAR > cAR) { drawW = W; drawH = W / vAR; offY = (H - drawH) / 2; }
       else            { drawH = H; drawW = H * vAR; offX = (W - drawW) / 2; }
     }
+
+    // Resolve a joint ID (numeric MediaPipe index OR synthetic "neck"/"midHip")
+    // to a 2D point in raw2d image space, returning null if confidence too low.
+    const resolve = (id) => {
+      if (typeof id === "number") {
+        const p = frame.raw2d[id];
+        if (!p || p.score < 0.3) return null;
+        return { x: p.x, y: p.y, score: p.score };
+      }
+      if (id === "neck") {
+        const a = frame.raw2d[11], b = frame.raw2d[12];
+        if (!a || !b) return null;
+        const score = Math.min(a.score, b.score);
+        if (score < 0.3) return null;
+        return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, score };
+      }
+      if (id === "midHip") {
+        const a = frame.raw2d[23], b = frame.raw2d[24];
+        if (!a || !b) return null;
+        const score = Math.min(a.score, b.score);
+        if (score < 0.3) return null;
+        return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, score };
+      }
+      return null;
+    };
     const proj = (p) => [offX + p.x * drawW, offY + p.y * drawH];
+
+    // Bones
     ctx.lineCap = "round";
     ctx.lineWidth = 5;
     for (const [a, b, color] of LM.COLORED_CONNECTIONS) {
-      const pa = frame.raw2d[a], pb = frame.raw2d[b];
+      const pa = resolve(a), pb = resolve(b);
       if (!pa || !pb) continue;
-      if (pa.score < 0.3 && pb.score < 0.3) continue;
       const [ax, ay] = proj(pa), [bx, by] = proj(pb);
       ctx.strokeStyle = color;
       ctx.beginPath();
@@ -85,11 +111,13 @@ export class Skeleton3D {
       ctx.lineTo(bx, by);
       ctx.stroke();
     }
-    for (let j = 0; j < 33; j++) {
-      const p = frame.raw2d[j];
+
+    // Joint dots — only the 18 COCO joints (not all 33 MediaPipe landmarks)
+    for (const j of LM.COCO_JOINTS) {
+      const p = resolve(j.id);
       if (!p) continue;
       const [x, y] = proj(p);
-      ctx.fillStyle = LM.JOINT_COLORS[j] || "#fff";
+      ctx.fillStyle = j.color;
       ctx.beginPath();
       ctx.arc(x, y, 5, 0, Math.PI * 2);
       ctx.fill();
@@ -100,19 +128,32 @@ export class Skeleton3D {
     const oldW = this.W, oldH = this.H;
     this.W = W; this.H = H;
     const pts = frame.points.map(p => this._project([p.x, p.y, p.z]));
+
+    // Synthetic 3D points
+    const syn = {};
+    const ls = frame.points[11], rs = frame.points[12];
+    const lh = frame.points[23], rh = frame.points[24];
+    syn.neck   = this._project([(ls.x+rs.x)/2, (ls.y+rs.y)/2, (ls.z+rs.z)/2]);
+    syn.midHip = this._project([(lh.x+rh.x)/2, (lh.y+rh.y)/2, (lh.z+rh.z)/2]);
+    const resolve = (id) => typeof id === "number" ? pts[id] : syn[id];
+
     ctx.lineCap = "round";
     ctx.lineWidth = 5;
     for (const [a, b, color] of LM.COLORED_CONNECTIONS) {
+      const pa = resolve(a), pb = resolve(b);
+      if (!pa || !pb) continue;
       ctx.strokeStyle = color;
       ctx.beginPath();
-      ctx.moveTo(pts[a][0], pts[a][1]);
-      ctx.lineTo(pts[b][0], pts[b][1]);
+      ctx.moveTo(pa[0], pa[1]);
+      ctx.lineTo(pb[0], pb[1]);
       ctx.stroke();
     }
-    for (let j = 0; j < 33; j++) {
-      ctx.fillStyle = LM.JOINT_COLORS[j] || "#fff";
+    for (const j of LM.COCO_JOINTS) {
+      const p = resolve(j.id);
+      if (!p) continue;
+      ctx.fillStyle = j.color;
       ctx.beginPath();
-      ctx.arc(pts[j][0], pts[j][1], 5, 0, Math.PI * 2);
+      ctx.arc(p[0], p[1], 5, 0, Math.PI * 2);
       ctx.fill();
     }
     this.W = oldW; this.H = oldH;
@@ -266,52 +307,7 @@ export class Skeleton3D {
     const frame = this.frames[i];
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.W, this.H);
-
-    if (!frame.raw2d) return;
-
-    // Compute the rect where the video is actually drawn (object-fit: contain).
-    let drawW = this.W, drawH = this.H, offX = 0, offY = 0;
-    if (this.videoEl && this.videoEl.videoWidth) {
-      const vAR = this.videoEl.videoWidth / this.videoEl.videoHeight;
-      const cAR = this.W / this.H;
-      if (vAR > cAR) {
-        drawW = this.W;
-        drawH = this.W / vAR;
-        offY = (this.H - drawH) / 2;
-      } else {
-        drawH = this.H;
-        drawW = this.H * vAR;
-        offX = (this.W - drawW) / 2;
-      }
-    }
-
-    const proj = (p) => [offX + p.x * drawW, offY + p.y * drawH];
-
-    // Bones with OpenPose limb colors
-    ctx.lineCap = "round";
-    ctx.lineWidth = 4;
-    for (const [a, b, color] of LM.COLORED_CONNECTIONS) {
-      const pa = frame.raw2d[a], pb = frame.raw2d[b];
-      if (!pa || !pb) continue;
-      if (pa.score < 0.3 && pb.score < 0.3) continue;
-      const [ax, ay] = proj(pa), [bx, by] = proj(pb);
-      ctx.strokeStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(ax, ay);
-      ctx.lineTo(bx, by);
-      ctx.stroke();
-    }
-
-    // Joints with OpenPose dot palette
-    for (let j = 0; j < 33; j++) {
-      const p = frame.raw2d[j];
-      if (!p) continue;
-      const [x, y] = proj(p);
-      ctx.fillStyle = LM.JOINT_COLORS[j] || "#ffffff";
-      ctx.beginPath();
-      ctx.arc(x, y, 4, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    this._drawOverlayBones(ctx, this.W, this.H, frame);
   }
 
   _render3D(i) {
@@ -319,31 +315,8 @@ export class Skeleton3D {
     const ctx = this.ctx;
     ctx.fillStyle = "#0a0908";
     ctx.fillRect(0, 0, this.W, this.H);
-
     this._drawGround();
-
-    const pts = frame.points.map(p => this._project([p.x, p.y, p.z]));
-
-    ctx.lineCap = "round";
-    for (const [a, b, color] of LM.COLORED_CONNECTIONS) {
-      const pa = pts[a], pb = pts[b];
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(pa[0], pa[1]);
-      ctx.lineTo(pb[0], pb[1]);
-      ctx.stroke();
-    }
-
-    for (let j = 0; j < 33; j++) {
-      const p = pts[j];
-      const c = frame.points[j].score;
-      const r = 3 + c * 2;
-      ctx.fillStyle = LM.JOINT_COLORS[j] || "#ffffff";
-      ctx.beginPath();
-      ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    this._draw3DBones(ctx, this.W, this.H, frame);
   }
 
   _drawGround() {

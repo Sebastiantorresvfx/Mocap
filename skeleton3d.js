@@ -1,4 +1,5 @@
 // Minimal 3D skeleton viewer — no external 3D library.
+// VERSION: COCO18-v3 (uses LM.COLORED_CONNECTIONS only)
 // Two render modes:
 //   "3d"      — orthographic 3D with orbit/zoom
 //   "overlay" — flat 2D projection onto the source video using

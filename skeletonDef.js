@@ -1,4 +1,5 @@
 // MediaPipe Pose 33 landmark definitions
+// VERSION: COCO18-v3 (Y-shape torso, no horizontal lines)
 // https://developers.google.com/mediapipe/solutions/vision/pose_landmarker
 
 export const LM = {
@@ -29,20 +30,9 @@ export const LM = {
     "LeftAnkle","RightAnkle","LeftHeel","RightHeel",
     "LeftFootIndex","RightFootIndex"
   ],
-  CONNECTIONS: [
-    // face
-    [0,2],[2,5],[5,8],[0,1],[1,4],[4,7],
-    [9,10],
-    // shoulders -> arms
-    [11,12],
-    [11,13],[13,15],[15,17],[15,19],[15,21],[17,19],
-    [12,14],[14,16],[16,18],[16,20],[16,22],[18,20],
-    // torso
-    [11,23],[12,24],[23,24],
-    // legs
-    [23,25],[25,27],[27,29],[27,31],[29,31],
-    [24,26],[26,28],[28,30],[28,32],[30,32],
-  ],
+  // (Legacy CONNECTIONS array removed in v2 — render code now uses
+  // COLORED_CONNECTIONS exclusively. If anything still references
+  // LM.CONNECTIONS, it will throw and surface in the diagnostic log.)
 
   // COCO 18-point topology mapped onto MediaPipe's 33 landmarks.
   // Synthesized joints (not in MediaPipe but in COCO):

@@ -935,18 +935,29 @@ function drawOverlay(lms) {
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
   if (!lms) return;
   const W = overlay.width, H = overlay.height;
-  overlayCtx.strokeStyle = "rgba(255, 91, 31, 0.85)";
-  overlayCtx.lineWidth = 2;
-  for (const [a, b] of LM.CONNECTIONS) {
+  const resolve = (id) => {
+    if (typeof id === "number") return lms[id];
+    if (id === "neck")   return { x: (lms[11].x + lms[12].x) / 2, y: (lms[11].y + lms[12].y) / 2 };
+    if (id === "midHip") return { x: (lms[23].x + lms[24].x) / 2, y: (lms[23].y + lms[24].y) / 2 };
+    return null;
+  };
+  overlayCtx.lineWidth = 3;
+  overlayCtx.lineCap = "round";
+  for (const [a, b, color] of LM.COLORED_CONNECTIONS) {
+    const pa = resolve(a), pb = resolve(b);
+    if (!pa || !pb) continue;
+    overlayCtx.strokeStyle = color;
     overlayCtx.beginPath();
-    overlayCtx.moveTo(lms[a].x * W, lms[a].y * H);
-    overlayCtx.lineTo(lms[b].x * W, lms[b].y * H);
+    overlayCtx.moveTo(pa.x * W, pa.y * H);
+    overlayCtx.lineTo(pb.x * W, pb.y * H);
     overlayCtx.stroke();
   }
-  overlayCtx.fillStyle = "#f7c948";
-  for (const p of lms) {
+  for (const j of LM.COCO_JOINTS) {
+    const p = resolve(j.id);
+    if (!p) continue;
+    overlayCtx.fillStyle = j.color;
     overlayCtx.beginPath();
-    overlayCtx.arc(p.x * W, p.y * H, 3, 0, Math.PI * 2);
+    overlayCtx.arc(p.x * W, p.y * H, 4, 0, Math.PI * 2);
     overlayCtx.fill();
   }
 }
